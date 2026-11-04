@@ -1,0 +1,11 @@
+{
+  "name": "session-hub",
+  "version": "0.1.0",
+  "description": "A pane listing every running Claude Code session on this machine (name, repo, branch, recent prompts and actions) with a Jump button to switch to it",
+  "author": { "name": "Aleksandro Matejic" },
+  "homepage": "https://github.com/devoriales/claude-session-hub",
+  "repository": "https://github.com/devoriales/claude-session-hub",
+  "license": "MIT",
+  "keywords": ["sessions", "pane", "dashboard", "tmux", "iterm2", "vscode"],
+  "types": "./types/index.d.ts"
+}
