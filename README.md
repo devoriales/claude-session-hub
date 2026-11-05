@@ -98,9 +98,11 @@ claude plugin install session-hub --marketplace devoriales/claude-session-hub
    case (`acme timeout`). Searching covers the whole history, not just the
    newest few. The `1`–`9` and letter hotkeys follow the rows that match. Press
    Enter to move onto the first match (Enter again presses its button), `s` to
-   change the search, and clear the field to see everything again. Or search
+   change the search. **To leave the search, press `Esc`:** it clears the
+   search and shows everything again (the pane stays open; `Esc` once more
+   closes it). Deleting the text in the field does the same. Or search
    straight from the prompt: `/sessions checkout timeout`.
-7. To hide the pane, press `x` or `Esc` (or click **x Close**) while it has
+7. To hide the pane, press `x` or `Esc` (`Esc` twice while searching) (or click **x Close**) while it has
    the keyboard, or type `/sessions close` from the prompt. It stops polling
    while closed; `/sessions` brings it back.
 8. Type `/sessions help` to list these options.

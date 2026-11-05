@@ -601,6 +601,19 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // Esc first clears a search and keeps the pane; with no search it closes it.
+  // Only the person's close (Esc, the close mark) is held back; x and
+  // /sessions close go through $.ui.close and always close.
+  on('ui.close', async ($, e, next) => {
+    if (e.id !== PANE || e.origin.kind !== 'person') return next(e)
+    const { query } = await read($, search)
+    if (!query) return next(e)
+    await setQuery($, '')
+    await update($, search, s => ({ ...s, rev: (s.rev ?? 0) + 1 }))
+    $.ui.toast('Search cleared. Esc again closes the pane.', { timeoutMs: 3000 })
+    return { deny: 'Esc cleared the search instead' }
+  })
+
   on('command.run', { command: 'sessions' }, async ($, e) => {
     const flags = e.args.trim().split(/\s+/).filter(Boolean)
     if (flags.length === 1 && HELP_ARGS.has(flags[0]!)) return { text: USAGE }
