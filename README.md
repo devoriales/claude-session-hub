@@ -3,6 +3,10 @@
 See every Claude Code session running on your machine in one pane, and jump to
 any of them with a single key.
 
+![session-hub demo: /sessions opens the pane, listing running sessions and recent ones, and a recent session is resumed in place](docs/demo.gif)
+
+<sub>Recorded with dummy repos in a sandbox; the PRs shown are made up. To re-record it, see [`demo/record.sh`](demo/record.sh).</sub>
+
 ```
 ○ web-app-d7  idle · 2m                                     [ 1 Jump ]
   web-app @ main  ~/code/web-app
@@ -72,7 +76,10 @@ claude plugin install session-hub --marketplace devoriales/claude-session-hub
 3. Press `1`–`9`, or click **Jump**, to switch to that session.
 4. Press `a`–`h`, or click **Resume**, to reopen a recent session. The first
    press only marks the row (`▶`, button turns to **Open?**) and says what it
-   would open; press the same key again within 5 seconds to confirm. It opens a
+   would open; press the same key again within 5 seconds to confirm. A session
+   from the same folder as this one is resumed **right here** (like `/resume <id>`,
+   replacing the current conversation, which you can resume later). A session
+   from another folder opens in a
    new terminal window in that session's folder running `claude --resume <id>`
    (on macOS: the terminal Claude Code itself runs in, else iTerm2 if it is
    running, else Terminal.app — see [Choosing the terminal](#choosing-the-terminal);

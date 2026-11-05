@@ -1,0 +1,22 @@
+#!/bin/sh
+# Stand-in for the GitHub CLI in the demo sandbox: the dummy repos have no real
+# GitHub remote, so this answers session-hub's `gh pr list --head <branch>` with
+# a made-up PR per branch. Anything else fails like an unauthenticated gh.
+[ "$1" = "auth" ] && { [ "$2" = token ] && echo demo-token; exit 0; }
+[ "$1 $2" = "pr list" ] || { echo "gh (demo stub): not supported" >&2; exit 1; }
+branch=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "--head" ] && branch="$2"
+  shift
+done
+repo="$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")"
+url="https://github.com/demo-org/$repo/pull"
+case "$branch" in
+  fix/checkout-timeout)
+    echo "[{\"number\":128,\"title\":\"Fix checkout e2e timeout on slow runners\",\"url\":\"$url/128\",\"state\":\"OPEN\",\"isDraft\":false,\"reviewDecision\":\"REVIEW_REQUIRED\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]}]" ;;
+  feat/rate-limit)
+    echo "[{\"number\":42,\"title\":\"Rate-limit the public API per IP\",\"url\":\"$url/42\",\"state\":\"OPEN\",\"isDraft\":false,\"reviewDecision\":\"APPROVED\",\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]}]" ;;
+  feat/coupons)
+    echo "[{\"number\":121,\"title\":\"Coupon codes at checkout\",\"url\":\"$url/121\",\"state\":\"MERGED\",\"isDraft\":false,\"reviewDecision\":\"APPROVED\",\"statusCheckRollup\":[]}]" ;;
+  *) echo "[]" ;;
+esac

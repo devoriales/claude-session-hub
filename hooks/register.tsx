@@ -116,10 +116,12 @@ const oneLine = (text: string, max: number) => {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
 
-const describeTool = (name: string, input: Record<string, unknown>) => {
-  const pick = ['description', 'command', 'file_path', 'pattern', 'url', 'query', 'skill', 'prompt']
+const describeTool = (name: string, input: Record<string, unknown>, cwd?: string) => {
+  let pick = ['description', 'command', 'file_path', 'pattern', 'url', 'query', 'skill', 'prompt']
     .map(k => input[k])
     .find(v => typeof v === 'string' && v.length > 0) as string | undefined
+  // A file in the session's own folder reads better relative: "Edit: src/server.js".
+  if (pick && cwd && pick === input.file_path && pick.startsWith(`${cwd}/`)) pick = pick.slice(cwd.length + 1)
   const short = name.replace(/^mcp__([^_]+)__/, '$1:')
   return pick ? `${short}: ${oneLine(pick, 70)}` : short
 }
@@ -154,7 +156,7 @@ const parseTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> => {
     }
     if (row.type === 'assistant' && Array.isArray(row.message?.content)) {
       for (const block of row.message.content) {
-        if (block?.type === 'tool_use') actions.push(describeTool(block.name, block.input ?? {}))
+        if (block?.type === 'tool_use') actions.push(describeTool(block.name, block.input ?? {}, cwd))
       }
     }
   }
@@ -413,7 +415,7 @@ async function refresh($: EngineInterface) {
 
 async function jump($: EngineInterface, s: SessionInfo, surface: any) {
   const root: string = $.plugin.root
-  const cwd = s.cwd.startsWith('~') ? `${await $.env.get('HOME')}${s.cwd.slice(1)}` : s.cwd
+  const cwd = await expandHome($, s.cwd)
   const res = await $.process
     .run(['sh', `${root}/bin/jump.sh`, String(s.pid), s.kind, s.sessionId, cwd], { timeoutMs: 15000 })
     .catch((error: unknown) => ({ exitCode: 1, stdout: '', stderr: String(error) }))
@@ -442,15 +444,32 @@ async function pressResume($: EngineInterface, r: RecentInfo, key: string | unde
   await update($, armed, () => ({ sessionId: r.sessionId, at: now }))
   const label = r.title ?? r.prompts.at(-1) ?? r.sessionId.slice(0, 8)
   const again = key ? `Press ${key} again` : 'Click Resume again'
-  $.ui.toast(`${again} to open “${oneLine(label, 60)}” (${r.cwd}) in a new terminal`, { timeoutMs: ARM_MS })
+  const where = (await isHere($, r)) ? 'here, replacing this conversation' : `(${r.cwd}) in a new terminal`
+  $.ui.toast(`${again} to open “${oneLine(label, 60)}” ${where}`, { timeoutMs: ARM_MS })
+}
+
+async function expandHome($: EngineInterface, path: string) {
+  return path.startsWith('~') ? `${await $.env.get('HOME')}${path.slice(1)}` : path
+}
+
+// /resume only switches in place to a session from this session's folder; one
+// from elsewhere gets a new terminal in its own folder instead.
+async function isHere($: EngineInterface, r: RecentInfo) {
+  return (await expandHome($, r.cwd)) === (await $.session.cwd())
 }
 
 async function resume($: EngineInterface, r: RecentInfo, surface: any) {
-  const home = await $.env.get('HOME')
-  const cwd = r.cwd.startsWith('~') ? `${home}${r.cwd.slice(1)}` : r.cwd
+  const cwd = await expandHome($, r.cwd)
   const label = r.title ?? r.sessionId.slice(0, 8)
   if (!(await $.fs.exists(cwd).catch(() => false))) {
     return $.ui.toast(`Can't resume ${label}: ${r.cwd} no longer exists`, { timeoutMs: 8000 })
+  }
+  if (await isHere($, r)) {
+    const ran = await $.command
+      .run({ command: 'resume', args: r.sessionId })
+      .then(() => true, () => false)
+    if (ran) return
+    // Fall through to a new terminal if /resume was refused.
   }
   const res = await $.process
     .run(['sh', `${$.plugin.root}/bin/jump.sh`, '0', 'resume', r.sessionId, cwd], { timeoutMs: 15000 })
@@ -485,7 +504,12 @@ function PrLine({ pr, els }: { pr: PrInfo; els: { Box: any; Text: any; Link: any
   return (
     <Box flexDirection="row" gap={1}>
       <Text color={state.color}>⇡</Text>
-      <Link href={pr.url} label={`#${pr.number}`} />
+      {/* Keep the number whole; only the title gives way when the row is narrow. */}
+      <Box flexShrink={0}>
+        <Text>
+          <Link href={pr.url} label={`#${pr.number}`} />
+        </Text>
+      </Box>
       <Text wrap="truncate-end">
         <Text color={state.color}>{state.label}</Text>
         {checks && (
@@ -557,6 +581,8 @@ export const register: Register = on => {
     const pending = await read($, armed)
     const now = await $.clock.now()
     const others = list.filter(s => !s.isSelf)
+    const home = await $.env.get('HOME')
+    const selfCwd = tilde(await $.session.cwd(), home)
     // Room left for the banner beside the Close button.
     const width = e.props.bodyColumns - CLOSE_BUTTON_COLUMNS
     const isWide = width >= ROBOT_COLUMNS + TITLE_WIDE[0]!.length
@@ -665,6 +691,7 @@ export const register: Register = on => {
         {recent.map((r, i) => {
           const key = RECENT_KEYS[i]
           const waiting = isArmed(pending, r.sessionId, now)
+          const here = r.cwd === selfCwd
           return (
           <Box key={`recent-${r.sessionId}`} flexDirection="column">
             <Box flexDirection="row" justifyContent="space-between">
@@ -683,7 +710,8 @@ export const register: Register = on => {
             </Box>
             {waiting && (
               <Text color="yellow" wrap="truncate-end">
-                {key ? `Press ${key} again` : 'Click again'} to open a new terminal running claude --resume here
+                {key ? `Press ${key} again` : 'Click again'} to{' '}
+                {here ? 'resume it in this window, replacing this conversation' : 'open a new terminal running claude --resume there'}
               </Text>
             )}
             <Text dimColor wrap="truncate-middle">
