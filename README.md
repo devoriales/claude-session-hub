@@ -132,18 +132,38 @@ Three settings change how much the pane shows:
 | `promptCount` | 3 | How many of a running session's last prompts each row shows, 0–10. A past session shows one fewer. |
 | `actionCount` | 3 | How many of a running session's last tool calls each row shows, 0–10. |
 
-Change them in Claude Code with `/config` (they are listed under the plugin), or
-from a shell:
+**Change them inside Claude Code:** type
+
+```
+/plugin configure session-hub@claude-session-hub
+```
+
+and enter a value for each one (leave it empty to keep the default). They are
+also listed in `/config`.
+
+**Change them from a shell:**
 
 ```sh
-claude plugin configure session-hub@claude-session-hub              # show the settings and their values
+# See the settings and their current values
+claude plugin configure session-hub@claude-session-hub
+
+# Set one or more (options you leave out keep their value)
 echo '{"recentCount":"12","promptCount":"1"}' \
   | claude plugin configure session-hub@claude-session-hub --values-stdin
 ```
 
-They are saved in `~/.claude/settings.json` under `pluginConfigs`. They are read
-when a session starts, so type `/reload-plugins` (or restart Claude Code) after
-changing them.
+**Or set them when installing:**
+
+```sh
+claude plugin install session-hub@claude-session-hub --config recentCount=12 --config actionCount=0
+```
+
+**Then reload:** settings are read when a session starts, so type
+`/reload-plugins` in an open session (or restart Claude Code) to apply them.
+
+They are saved in `~/.claude/settings.json` under
+`pluginConfigs["session-hub@claude-session-hub"].options`, so you can also edit
+them there by hand.
 
 ### Choosing the terminal
 
