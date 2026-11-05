@@ -55,6 +55,8 @@ const TITLE_WIDE = blockText('CLAUDE SESSION HUB') // 63 columns
 const TITLE_MID = blockText('SESSION HUB') // 37 columns
 const TITLE_MID_LABEL = [...'CLAUDE'].join(' ')
 const TAGLINE = 'www.devoriales.com'
+// This plugin's version from its plugin.json, read when the session starts.
+let version: string | undefined
 const ROBOT_COLUMNS = 8 // the robot and the gap after it
 const CLOSE_BUTTON_COLUMNS = 12 // the `x Close` button and a gap before it
 const NEON = ['#ff4fd8', '#c86bff', '#7c8cff', '#22c7e8']
@@ -585,6 +587,10 @@ export const register: Register = (on, options) => {
   config.actionCount = clampInt(options.actionCount, 0, 10, 3)
 
   on('session.start', async ($, e, next) => {
+    version = await $.fs
+      .read(`${$.plugin.root}/.claude-plugin/plugin.json`)
+      .then(text => JSON.parse(String(text)).version as string | undefined)
+      .catch(() => undefined)
     await $.command.register({
       name: 'sessions',
       description: 'Show every running Claude Code session in a pane (/sessions help lists the options)',
@@ -702,12 +708,14 @@ export const register: Register = (on, options) => {
             </Text>
           )
         })}
+        {version && <Text>{' '.repeat(ROBOT_COLUMNS + 4)}v{version}</Text>}
       </Box>
     ) : (
       <Text>
         <Text color={NEON[0]} bold>▓▒░ CLAUDE </Text>
         <Text color={NEON[2]} bold>SESSION HUB ░▒▓</Text>
         <Text dimColor> devoriales</Text>
+        {version && <Text> v{version}</Text>}
       </Text>
     )
 
