@@ -152,7 +152,7 @@ Restart Claude Code after changing it.
   SDK) are left out.
 - Jumping and resuming are done by [`bin/jump.sh`](bin/jump.sh), a small POSIX shell script.
 
-Everything stays on your machine: Claude Session Hub makes no network calls.
+Everything stays on your machine, with one exception: if the GitHub CLI `gh` is installed and logged in, it is asked for the PR of each session's branch (at most once a minute per branch), which contacts GitHub. Without `gh`, Claude Session Hub makes no network calls. It never calls the model, so it uses no tokens.
 
 ## Develop
 
