@@ -5,21 +5,6 @@ any of them with a single key.
 
 ![Claude Session Hub demo: /sessions opens the pane, listing running sessions and recent ones, and a recent session is resumed in place](docs/demo.gif)
 
-```
-○ web-app-d7  idle · 2m                                     [ 1 Jump ]
-  web-app @ main  ~/code/web-app
-  Fix flaky checkout test
-  › why does the e2e job time out on arm runners?
-    ⚙ Bash: Run the e2e suite locally
-○ api-server-e4  idle · 10m                                 [ 2 Jump ]
-  ...
-● dotfiles-a1  busy · 0s                               (this session)
-Recent
-◦ Fix login redirect  ended · 3h ago                      [ a Resume ]
-  web-app @ fix/login  ~/code/web-app
-  › ship it
-```
-
 For each session the pane shows:
 
 - the session's **name** and whether it is **busy or idle**, and when it was last active
@@ -47,24 +32,35 @@ while it is open.
 
 ## Install
 
-In Claude Code, type:
+The plugin has three names, and commands use the second and third:
+
+| Name | What it is |
+| --- | --- |
+| **Claude Session Hub** | the display name, shown in `/plugin` and `/plugin configure` |
+| `session-hub` | the plugin ID |
+| `claude-session-hub` | the marketplace (this GitHub repo), so the full ID is `session-hub@claude-session-hub` |
+
+**From a terminal:**
+
+```sh
+claude plugin marketplace add devoriales/claude-session-hub
+claude plugin install session-hub@claude-session-hub --scope user
+claude plugin list | grep -A3 session-hub      # check: Version and "enabled"
+```
+
+**Inside Claude Code:**
 
 ```
 /plugin install session-hub --marketplace devoriales/claude-session-hub
 ```
 
-1. Answer `y` when asked to add the marketplace `github:devoriales/claude-session-hub`.
-2. Pick the **user** scope (press Enter), so it loads in every session.
-3. You should see `Installed session-hub. Plugin is now active.`
-
-Or install it from a shell:
-
-```sh
-claude plugin install session-hub --marketplace devoriales/claude-session-hub
-```
+Answer `y` when asked to add the marketplace `devoriales/claude-session-hub`,
+and pick the **user** scope (press Enter) so it loads in every session.
 
 **In the Claude desktop app:** click **+** next to the prompt box, then
 **Plugins** → **Add marketplace** → `devoriales/claude-session-hub` → **Add plugin**.
+
+Then type `/sessions`. The pane shows the version under `www.devoriales.com`.
 
 ## Use
 
@@ -80,7 +76,7 @@ claude plugin install session-hub --marketplace devoriales/claude-session-hub
    from another folder opens in a
    new terminal window in that session's folder running `claude --resume <id>`
    (on macOS: the terminal Claude Code itself runs in, else iTerm2 if it is
-   running, else Terminal.app — see [Choosing the terminal](#choosing-the-terminal);
+   running, else Terminal.app, see [Choosing the terminal](#choosing-the-terminal);
    a new tmux window or your terminal on Linux). If no terminal can be opened, the command is
    copied to your clipboard instead.
 5. Type `/sessions -a` (or `--all`) to list **every** past session instead of
@@ -178,12 +174,58 @@ the terminal Claude Code is running in. To force one, set
 
 Restart Claude Code after changing it.
 
-## Update or remove
+## Update, reinstall, remove
+
+All from a terminal. The marketplace is a copy of this repo, so refresh it first,
+or the update finds nothing new.
+
+**Update to the latest version:**
+
+```sh
+claude plugin marketplace update claude-session-hub
+claude plugin update session-hub@claude-session-hub
+```
+
+It prints `updated from X to Y`, or `already at the latest version`.
+
+**Check which version you have:**
+
+```sh
+claude plugin list | grep -A3 session-hub
+```
+
+The latest version is on the [Releases](https://github.com/devoriales/claude-session-hub/releases)
+page. Inside Claude Code, the pane shows the version it is running under the banner.
+
+**Reinstall** (when an update misbehaves, or you installed an older ID such as
+`claude-session-hub@claude-session-hub`):
+
+```sh
+claude plugin uninstall session-hub@claude-session-hub      # or the old ID
+claude plugin marketplace update claude-session-hub
+claude plugin install session-hub@claude-session-hub --scope user
+```
+
+**Remove it completely:**
+
+```sh
+claude plugin uninstall session-hub@claude-session-hub
+claude plugin marketplace remove claude-session-hub
+```
+
+**Reload after any of these.** Sessions that are already open keep running the
+copy they started with. In each one, type:
 
 ```
-/plugin update session-hub
-/plugin uninstall session-hub
+/reload-plugins
 ```
+
+or quit and start `claude` again. New sessions load the installed version on
+their own. If the version under the banner did not change, that session has not
+reloaded yet.
+
+To update automatically: in Claude Code run `/plugin`, open **Marketplaces**,
+select `claude-session-hub` and turn on auto-update.
 
 ## How it works
 
@@ -198,15 +240,61 @@ Restart Claude Code after changing it.
 
 Everything stays on your machine, with one exception: if the GitHub CLI `gh` is installed and logged in, it is asked for the PR of each session's branch (at most once a minute per branch), which contacts GitHub. Without `gh`, Claude Session Hub makes no network calls. It never calls the model, so it uses no tokens.
 
-## Develop
+## Contributing
 
-```sh
-git clone https://github.com/devoriales/claude-session-hub
-claude --plugin-dir ./claude-session-hub      # start a session with your local copy loaded
-claude plugin validate ./claude-session-hub   # check the manifest and hooks module
-```
+Bug reports, ideas and pull requests are welcome.
 
-The pane is in [`hooks/register.tsx`](hooks/register.tsx).
+**Report a bug** in [Issues](https://github.com/devoriales/claude-session-hub/issues).
+Include your OS, the terminal or editor the sessions run in (iTerm2, tmux, VS
+Code, ...), the version under the banner, and, if a session is missing or wrong,
+what `claude agents --json` prints for it.
+
+**Make a change:**
+
+1. Fork the repo on GitHub and clone your fork:
+
+   ```sh
+   git clone https://github.com/<you>/claude-session-hub
+   cd claude-session-hub
+   git checkout -b fix/short-description
+   ```
+
+2. Run Claude Code with your local copy. Disable the installed one first, so
+   the two don't both load:
+
+   ```sh
+   claude plugin disable session-hub@claude-session-hub
+   claude --plugin-dir .
+   ```
+
+   Type `/sessions` to try it. After each edit, run `/reload-plugins` in that
+   session to load the new code. When you're done:
+   `claude plugin enable session-hub@claude-session-hub`.
+
+3. Check it before you push:
+
+   ```sh
+   npx -y -p typescript@5.9.3 tsc --noEmit -p .   # type-check the hooks module
+   claude plugin validate .                       # manifest, hooks and permissions
+   ```
+
+   Both must pass. `validate` also prints a warning about a missing listing
+   icon; that one is expected.
+
+4. Commit with a [Conventional Commits](https://www.conventionalcommits.org/)
+   message (see [Releases](#releases)), push to your fork and open a pull
+   request against `main`. Describe what you changed and how you tested it, for
+   example which terminal you jumped from.
+
+**Where things are:**
+
+| Path | What it holds |
+| --- | --- |
+| [`hooks/register.tsx`](hooks/register.tsx) | the mod: the `/sessions` command, the pane, search, Resume |
+| [`bin/jump.sh`](bin/jump.sh) | Jump and Resume: switching to or opening terminals |
+| [`types/index.d.ts`](types/index.d.ts) | the shapes of the pane's data and state |
+| [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | the manifest and the settings (`userConfig`) |
+| [`demo/`](demo) | scripts that re-record `docs/demo.gif` in a sandbox (`demo/record.sh`) |
 
 ### Releases
 
@@ -224,7 +312,7 @@ Releases are made automatically by [semantic-release](https://semantic-release.g
 
 It sets the version in `.claude-plugin/plugin.json`, updates
 [`CHANGELOG.md`](CHANGELOG.md), tags `vX.Y.Z` and publishes a GitHub Release, so
-don't change the version by hand. `/plugin update` picks up the new version.
+don't change the version by hand. Users get it with the [update commands](#update-reinstall-remove).
 
 ## License
 
