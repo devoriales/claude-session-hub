@@ -210,6 +210,24 @@ claude plugin validate ./claude-session-hub   # check the manifest and hooks mod
 
 The pane is in [`hooks/register.tsx`](hooks/register.tsx).
 
+### Releases
+
+Releases are made automatically by [semantic-release](https://semantic-release.gitbook.io/)
+([`.github/workflows/release.yml`](.github/workflows/release.yml)) on every push to
+`main`. It reads the commit messages, so write them as
+[Conventional Commits](https://www.conventionalcommits.org/):
+
+| Commit message starts with | Release |
+| --- | --- |
+| `fix: …` | patch, 0.7.0 → 0.7.1 |
+| `feat: …` | minor, 0.7.0 → 0.8.0 |
+| `feat!: …`, or a `BREAKING CHANGE:` line in the body | major, 0.7.0 → 1.0.0 |
+| `docs:`, `chore:`, `ci:`, `refactor:`, `test:` | no release |
+
+It sets the version in `.claude-plugin/plugin.json`, updates
+[`CHANGELOG.md`](CHANGELOG.md), tags `vX.Y.Z` and publishes a GitHub Release, so
+don't change the version by hand. `/plugin update` picks up the new version.
+
 ## License
 
 [MIT](LICENSE)
