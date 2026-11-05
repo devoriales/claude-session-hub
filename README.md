@@ -5,8 +5,6 @@ any of them with a single key.
 
 ![Claude Session Hub demo: /sessions opens the pane, listing running sessions and recent ones, and a recent session is resumed in place](docs/demo.gif)
 
-<sub>Recorded with dummy repos in a sandbox; the PRs shown are made up. To re-record it, see [`demo/record.sh`](demo/record.sh).</sub>
-
 ```
 ○ web-app-d7  idle · 2m                                     [ 1 Jump ]
   web-app @ main  ~/code/web-app
