@@ -62,6 +62,9 @@ and pick the **user** scope (press Enter) so it loads in every session.
 
 Then type `/sessions`. The pane shows the version under `www.devoriales.com`.
 
+The install may print `3 userConfig options not yet set`. Those are the optional
+[settings](#settings); without them the defaults apply, so you can ignore it.
+
 ## Use
 
 1. Type `/sessions` to open the pane. It never opens by itself, and does no work
@@ -197,14 +200,19 @@ claude plugin list | grep -A3 session-hub
 The latest version is on the [Releases](https://github.com/devoriales/claude-session-hub/releases)
 page. Inside Claude Code, the pane shows the version it is running under the banner.
 
-**Reinstall** (when an update misbehaves, or you installed an older ID such as
-`claude-session-hub@claude-session-hub`):
+**Reinstall** (when an update misbehaves):
 
 ```sh
-claude plugin uninstall session-hub@claude-session-hub      # or the old ID
+claude plugin uninstall session-hub@claude-session-hub
 claude plugin marketplace update claude-session-hub
 claude plugin install session-hub@claude-session-hub --scope user
 ```
+
+**Installed it as `claude-session-hub@claude-session-hub`?** In release 0.5.0
+the plugin had that ID. Run the update above: Claude Code moves you to
+`session-hub@claude-session-hub` on its own and keeps your settings. If it then
+reports the plugin as `not cached`, run
+`claude plugin install session-hub@claude-session-hub` once.
 
 **Remove it completely:**
 
