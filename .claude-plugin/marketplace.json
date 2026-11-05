@@ -10,5 +10,8 @@
       "source": "./",
       "description": "See every running Claude Code session in one pane and jump to any of them"
     }
-  ]
+  ],
+  "renames": {
+    "claude-session-hub": "session-hub"
+  }
 }
