@@ -2,6 +2,7 @@
 # Bring another Claude Code session to the front.
 #
 # usage: jump.sh <pid> <kind> <session-id> <cwd>
+#        jump.sh 0 resume <session-id> <cwd>   open a terminal running `claude --resume`
 #
 # Prints one line:
 #   focused <how>   the terminal holding that session is now in front
@@ -21,6 +22,26 @@ tty_of() {
   t=$(ps -o tty= -p "$1" 2>/dev/null | tr -d ' ')
   case $t in '' | '?' | '??' | '-') return 1 ;; esac
   case $t in /dev/*) echo "$t" ;; *) echo "/dev/$t" ;; esac
+}
+
+# Is a macOS app running? Ask LaunchServices by bundle id (does not launch it);
+# pgrep alone misses iTerm2 in some setups.
+mac_running() {
+  [ "$(osascript -e "application id \"$1\" is running" 2>/dev/null)" = true ] || pgrep -xq "$2"
+}
+
+# Which macOS terminal new windows open in: $SESSION_HUB_TERMINAL (iterm or
+# terminal) wins, else the one Claude Code itself runs in, else auto.
+mac_pref() {
+  case $(printf '%s' "${SESSION_HUB_TERMINAL:-}" | tr '[:upper:]' '[:lower:]') in
+    iterm | iterm2) echo iterm; return ;;
+    terminal | apple_terminal) echo terminal; return ;;
+  esac
+  case ${TERM_PROGRAM:-} in
+    iTerm.app) echo iterm ;;
+    Apple_Terminal) echo terminal ;;
+    *) echo auto ;;
+  esac
 }
 
 parent_of() { ps -o ppid= -p "$1" 2>/dev/null | tr -d ' '; }
@@ -47,7 +68,7 @@ try_tmux() {
 }
 
 mac_iterm() {
-  pgrep -xq iTerm2 || return 1
+  mac_running com.googlecode.iterm2 iTerm2 || return 1
   r=$(osascript - "$1" <<'OSA' 2>/dev/null
 on run argv
   set t to item 1 of argv
@@ -74,7 +95,7 @@ OSA
 }
 
 mac_terminal() {
-  pgrep -xq Terminal || return 1
+  mac_running com.apple.Terminal Terminal || return 1
   r=$(osascript - "$1" <<'OSA' 2>/dev/null
 on run argv
   set t to item 1 of argv
@@ -158,11 +179,14 @@ linux_x11() {
   return 1
 }
 
-# A background session has no terminal: open one that attaches to it.
+# Open a new terminal window in $cwd running `claude $1 $sid`: `attach` for a
+# background session (it has no terminal), `--resume` for one that ended.
 open_attached() {
-  cmd="cd '$(printf '%s' "$cwd" | sed "s/'/'\\\\''/g")' && claude attach $sid"
+  run="claude $1 $sid"
+  cmd="cd '$(printf '%s' "$cwd" | sed "s/'/'\\\\''/g")' && $run"
   if [ "$os" = Darwin ]; then
-    if pgrep -xq iTerm2; then
+    pref=$(mac_pref)
+    if [ "$pref" = iterm ] || { [ "$pref" = auto ] && mac_running com.googlecode.iterm2 iTerm2; }; then
       osascript - "$cmd" <<'OSA' >/dev/null 2>&1 && echo "opened iTerm2" && return 0
 on run argv
   tell application "iTerm2"
@@ -184,7 +208,7 @@ OSA
     return 1
   fi
   if [ -n "$TMUX" ] && command -v tmux >/dev/null 2>&1; then
-    tmux new-window -c "$cwd" "claude attach $sid" && echo "opened tmux" && return 0
+    tmux new-window -c "$cwd" "$run" && echo "opened tmux" && return 0
   fi
   for term in "$TERMINAL" x-terminal-emulator gnome-terminal konsole kitty alacritty wezterm foot xterm; do
     [ -n "$term" ] && command -v "$term" >/dev/null 2>&1 || continue
@@ -201,6 +225,12 @@ OSA
   return 1
 }
 
+if [ "$kind" = resume ]; then
+  open_attached --resume && exit 0
+  echo "fallback none"
+  exit 0
+fi
+
 tty=$(tty_of "$pid")
 
 if [ -n "$tty" ]; then
@@ -216,7 +246,7 @@ if [ -n "$tty" ]; then
 fi
 
 if [ "$kind" != interactive ]; then
-  open_attached && exit 0
+  open_attached attach && exit 0
 fi
 
 echo "fallback ${tty:-none}"

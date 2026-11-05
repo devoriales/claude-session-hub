@@ -12,23 +12,35 @@ any of them with a single key.
 ○ api-server-e4  idle · 10m                                 [ 2 Jump ]
   ...
 ● dotfiles-a1  busy · 0s                               (this session)
+Recent
+◦ Fix login redirect  ended · 3h ago                      [ a Resume ]
+  web-app @ fix/login  ~/code/web-app
+  › ship it
 ```
 
 For each session the pane shows:
 
 - the session's **name** and whether it is **busy or idle**, and when it was last active
 - the **repo, branch and folder** it runs in
+- the **pull request** opened from that branch, if any: number (a link), open / draft /
+  merged / closed, and for open PRs the checks and review status
 - its **title** and its **last 3 prompts**
 - its **last 3 tool calls** (commands run, files edited, ...)
 
-Busy sessions are listed first. The pane refreshes every 5 seconds while it is open.
+Busy sessions are listed first. Below them, a **Recent** section lists the 8
+most recent sessions that are no longer running (title, repo, branch, folder and
+last prompts and PR), each with a **Resume** button. The pane refreshes every 5 seconds
+while it is open.
 
 ## Requirements
 
 - **Claude Code 2.1.318 or newer.** session-hub is a *mod* (a plugin with a
   hooks module), an early-access feature of Claude Code.
 - **macOS or Linux.**
-- `git` (to show repo and branch). Optional, for jumping on Linux:
+- `git` (to show repo and branch).
+- Optional: the GitHub CLI `gh`, logged in, to show each branch's PR. Without it
+  the PR line is left out. PRs are looked up at most once a minute per branch.
+- Optional, for jumping on Linux:
   `tmux`, `wmctrl` or `xdotool`.
 
 ## Install
@@ -54,10 +66,28 @@ claude plugin install session-hub --marketplace devoriales/claude-session-hub
 
 ## Use
 
-1. Type `/sessions` to open the pane. (On a terminal 144 columns or wider it also
-   opens by itself when a session starts.)
+1. Type `/sessions` to open the pane. It never opens by itself, and does no work
+   until you open it.
 2. Press `ctrl+x tab` (or click the pane) to give it the keyboard.
 3. Press `1`–`9`, or click **Jump**, to switch to that session.
+4. Press `a`–`h`, or click **Resume**, to reopen a recent session. The first
+   press only marks the row (`▶`, button turns to **Open?**) and says what it
+   would open; press the same key again within 5 seconds to confirm. It opens a
+   new terminal window in that session's folder running `claude --resume <id>`
+   (on macOS: the terminal Claude Code itself runs in, else iTerm2 if it is
+   running, else Terminal.app — see [Choosing the terminal](#choosing-the-terminal);
+   a new tmux window or your terminal on Linux). If no terminal can be opened, the command is
+   copied to your clipboard instead.
+5. Type `/sessions -a` (or `--all`) to list **every** past session instead of
+   just the 8 most recent, newest first. The pane scrolls (arrow keys once it
+   has focus); the first 8 rows keep their `a`–`h` hotkeys, the rest have a
+   **Resume** button to click. Only those first 8 get a PR lookup. The first
+   time, reading all transcripts can take a few seconds. Type `/sessions` to
+   go back to the short list.
+6. To hide the pane, press `x` or `Esc` (or click **x Close**) while it has
+   the keyboard, or type `/sessions close` from the prompt. It stops polling
+   while closed; `/sessions` brings it back.
+7. Type `/sessions help` to list these options.
 
 The session you are in is listed last, marked `(this session)`.
 
@@ -76,6 +106,19 @@ The session you are in is listed last, marked `(this session)`.
 On macOS, the first jump may ask you to let Claude Code control iTerm2 or
 Terminal (System Settings → Privacy & Security → Automation). Allow it.
 
+### Choosing the terminal
+
+On macOS, new windows (Resume, and attaching to a background session) open in
+the terminal Claude Code is running in. To force one, set
+`SESSION_HUB_TERMINAL` to `iterm` or `terminal`, for example in
+`~/.claude/settings.json`:
+
+```json
+{ "env": { "SESSION_HUB_TERMINAL": "iterm" } }
+```
+
+Restart Claude Code after changing it.
+
 ## Update or remove
 
 ```
@@ -89,7 +132,10 @@ Terminal (System Settings → Privacy & Security → Automation). Allow it.
 - Titles, prompts and tool calls are read from the end of each session's
   transcript in `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`). A
   transcript is only re-read when it changes.
-- Jumping is done by [`bin/jump.sh`](bin/jump.sh), a small POSIX shell script.
+- Recent sessions are the newest transcripts in `~/.claude/projects` whose
+  session is not running. Sessions started by scripts (`claude -p`, the Agent
+  SDK) are left out.
+- Jumping and resuming are done by [`bin/jump.sh`](bin/jump.sh), a small POSIX shell script.
 
 Everything stays on your machine: session-hub makes no network calls.
 
