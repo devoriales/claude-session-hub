@@ -2,3 +2,4 @@
 .claude-plugin/types/
 *.log
 __pycache__/
+.playwright-mcp/

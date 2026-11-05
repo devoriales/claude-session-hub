@@ -9,6 +9,7 @@ Run through demo/record.sh, which sets up the sandbox environment first.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -108,15 +109,36 @@ def record():
     time.sleep(0.1)
     term.send(f"\x1b[<0;{COLS - 20};4m")
     time.sleep(1.5)
-    term.send("a")  # arm Resume on the newest ended session
-    time.sleep(3.5)
-    term.send("a")  # confirm: resumes it right here
-    time.sleep(7)
+    term.send("s")  # into the search field
+    time.sleep(1.2)
+    term.send("coupon", 0.18)  # the list narrows as it is typed
+    time.sleep(3)
+    term.send("\r")  # onto the first match's Resume button
+    time.sleep(1.5)
+    term.send("\r")  # arm it: says it will resume here
+    time.sleep(3)
+    term.send("\r")  # confirm: resumes it right here
+    time.sleep(8)
     term.stop_recording()  # exit prints a resume hint with local paths
     term.send("\x03")
     time.sleep(0.4)
     term.send("\x03")
     term.close(5)
+
+
+def scrub(path):
+    """Blanks account notices (usage limits, reset times) out of the recording.
+
+    Each is replaced by as many spaces, so the screen around it stays the same.
+    """
+    notice = re.compile(r"You've used \d+% of your [a-z ]*limit[^\x1b]*")
+    lines = open(path).read().splitlines()
+    out = lines[:1]
+    for line in lines[1:]:
+        event = json.loads(line)
+        event[2] = notice.sub(lambda m: " " * len(m.group(0)), event[2])
+        out.append(json.dumps(event))
+    open(path, "w").write("\n".join(out) + "\n")
 
 
 def main():
@@ -145,6 +167,7 @@ def main():
         time.sleep(15)
 
         record()
+        scrub(OUT)
     finally:
         for term in running:
             term.send("\x03\x03")
