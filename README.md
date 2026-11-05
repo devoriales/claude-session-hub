@@ -91,10 +91,18 @@ claude plugin install session-hub --marketplace devoriales/claude-session-hub
    **Resume** button to click. Only those first 8 get a PR lookup. The first
    time, reading all transcripts can take a few seconds. Type `/sessions` to
    go back to the short list.
-6. To hide the pane, press `x` or `Esc` (or click **x Close**) while it has
+6. **Search:** press `s` (or click **s Search**) and type. The list narrows as
+   you type to the sessions, running or past, whose title, prompts, repo,
+   branch or folder contain **every** word you typed, in any order, ignoring
+   case (`acme timeout`). Searching covers the whole history, not just the
+   newest 8. The `1`–`9` and `a`–`h` hotkeys follow the rows that match. Press
+   Enter to move onto the first match (Enter again presses its button), `s` to
+   change the search, and clear the field to see everything again. Or search
+   straight from the prompt: `/sessions checkout timeout`.
+7. To hide the pane, press `x` or `Esc` (or click **x Close**) while it has
    the keyboard, or type `/sessions close` from the prompt. It stops polling
    while closed; `/sessions` brings it back.
-7. Type `/sessions help` to list these options.
+8. Type `/sessions help` to list these options.
 
 The session you are in is listed last, marked `(this session)`.
 

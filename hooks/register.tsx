@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Armed, PrInfo, RecentInfo, SessionInfo, Snapshot } from '../types'
+import type { Armed, PrInfo, RecentInfo, Search, SessionInfo, Snapshot } from '../types'
 
 const PANE = 'session-hub'
 const TITLE = 'Claude sessions'
@@ -24,9 +24,10 @@ const RECENT_KEYS = 'abcdefgh'
 const CLOSE_ARGS = new Set(['close', 'off', 'hide'])
 const HELP_ARGS = new Set(['help', '-h', '--help'])
 const USAGE = [
-  'Usage: /sessions [-a | close | help]',
+  'Usage: /sessions [-a | <search words> | close | help]',
   '  /sessions          open the pane: running sessions and the 8 most recent ones',
   '  /sessions -a       list every past session (also --all)',
+  '  /sessions <words>  search every session (title, prompts, repo, branch, folder)',
   '  /sessions close    close the pane (also off, hide); x or Esc in the pane does too',
   '  /sessions help     show this help (also -h, --help)',
 ].join('\n')
@@ -58,8 +59,45 @@ const EYES = '#ff3b3b'
 const snapshot = atom(
   { plugin: 'session-hub', key: 'snapshot' } as const,
   { list: [], recent: [], all: false, checkedAt: 0 } as Snapshot,
-  { shape: 'snapshot-4' },
+  { shape: 'snapshot-5' },
 )
+
+// The search field's text. Searching reads the whole history, so typing the
+// first letter switches to it (`auto`) and clearing the field switches back.
+const search = atom(
+  { plugin: 'session-hub', key: 'search' } as const,
+  { query: '' } as Search,
+  { shape: 'search-1' },
+)
+
+/**
+ * Whether a session matches what was typed in the search field.
+ *
+ * `query` is the field's text as typed (never empty here). `fields` are the
+ * session's searchable texts: title, prompts, repo, branch, folder and, for a
+ * running session, its name and recent tool calls.
+ */
+function matchesQuery(query: string, fields: (string | undefined)[]): boolean {
+  // Every word must appear somewhere, in any order and any field, ignoring case:
+  // "acme timeout" finds repo acme-shop with a prompt about a timeout.
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const text = fields.filter(Boolean).join('\n').toLowerCase()
+  return words.every(word => text.includes(word))
+}
+
+async function setQuery($: EngineInterface, query: string) {
+  const { query: before, auto } = await read($, search)
+  if (query === before) return
+  const { all = false } = await read($, snapshot)
+  // Searching needs the whole history; switch to it on the first letter and
+  // back once the field is cleared, unless /sessions -a asked for it.
+  const wantAll = query !== '' ? true : auto ? false : all
+  await update($, search, s => ({ ...s, query, auto: query !== '' ? auto || !all : false }))
+  if (wantAll !== all) {
+    await update($, snapshot, s => ({ ...s, all: wantAll, recent: [] }))
+    void refresh($)
+  }
+}
 
 // Resume opens a whole new terminal, so it takes two presses: the first marks
 // the row and says what it would open, a second within ARM_MS opens it.
@@ -90,6 +128,7 @@ type TranscriptInfo = {
   // Started by an SDK script (`claude -p`, Agent SDK) rather than a person.
   automated?: boolean
   prompts: string[]
+  allPrompts?: string[]
   actions: string[]
 }
 
@@ -161,7 +200,7 @@ const parseTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> => {
     }
   }
 
-  return { title, cwd, branch, automated, prompts: prompts.slice(-3), actions: actions.slice(-3) }
+  return { title, cwd, branch, automated, prompts: prompts.slice(-3), allPrompts: prompts, actions: actions.slice(-3) }
 }
 
 const SESSION_FILE = /\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
@@ -253,6 +292,7 @@ async function recentSessions(
       repo,
       branch: info.branch,
       prompts: info.prompts.slice(all ? -1 : -2),
+      allPrompts: info.allPrompts,
       activeAt: mtimeMs,
     }
     return { item, cwd: info.cwd, branch: info.branch }
@@ -557,30 +597,51 @@ export const register: Register = on => {
       await $.ui.close({ id: PANE })
       return { text: 'Sessions pane closed. /sessions opens it again.' }
     }
-    const unknown = flags.filter(f => f !== '-a' && f !== '--all')
+    const options = flags.filter(f => f.startsWith('-'))
+    const unknown = options.filter(f => f !== '-a' && f !== '--all')
     if (unknown.length > 0) return { text: `Unknown option ${unknown.join(' ')}.\n${USAGE}` }
-    const all = flags.length > 0
+    // Anything that isn't an option is a search: `/sessions checkout timeout`.
+    const query = flags.filter(f => !f.startsWith('-')).join(' ')
+    const all = options.length > 0 || query !== ''
     // Switching modes empties the list below the running sessions until it is read again.
     await update($, snapshot, s => ((s.all ?? false) === all ? s : { ...s, all, recent: [] }))
+    // A new key too, so the field shows this query even over text typed earlier.
+    await update($, search, s => ({ query, auto: query !== '' && options.length === 0, rev: (s.rev ?? 0) + 1 }))
     await $.ui.open({ id: PANE, title: TITLE, focus: true, closeOnEscape: true, rows: PANE_ROWS, columns: PANE_COLUMNS })
     // Reading every transcript the first time can take a while, so don't hold the
     // command; a tick already under way skips this one and the 5 s poll catches up.
     void refresh($)
 
     return {
-      text: all
+      text: query
+        ? `Sessions pane opened, searching every session for “${query}”. Press a–h or click Resume to reopen one. x or Esc closes it.`
+        : all
         ? 'Sessions pane opened with every past session. Press a–h or click Resume to reopen one; arrows scroll. /sessions shows recent only again. x or Esc closes it.'
         : 'Sessions pane opened. Press a number (or click Jump) to switch; x or Esc closes it.',
     }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const { Box, Text, Button, Link, Input } = $.ui.resolve(e)
     const els = { Box, Text, Link }
-    const { list, recent = [], all = false, error, checkedAt } = await read($, snapshot)
+    const { list: allRunning, recent: allRecent = [], all = false, error, checkedAt } = await read($, snapshot)
+    const { query, rev = 0 } = await read($, search)
+    const searchKey = `search-${rev}`
+    const q = query.trim()
     const pending = await read($, armed)
     const now = await $.clock.now()
+    // While searching, only matching rows are drawn; hotkeys go to what is drawn.
+    const list = q
+      ? allRunning.filter(s => matchesQuery(q, [s.name, s.title, s.repo, s.branch, s.cwd, ...s.prompts, ...s.actions]))
+      : allRunning
+    const recent = q
+      ? allRecent.filter(r => matchesQuery(q, [r.title, r.repo, r.branch, r.cwd, ...(r.allPrompts ?? r.prompts)]))
+      : allRecent
     const others = list.filter(s => !s.isSelf)
+    // Enter in the search field moves onto the first result's button.
+    const firstMatch = others[0]
+      ? `jump-${others[0].sessionId}`
+      : recent[0] ? `resume-${recent[0].sessionId}` : undefined
     const home = await $.env.get('HOME')
     const selfCwd = tilde(await $.session.cwd(), home)
     // Room left for the banner beside the Close button.
@@ -630,9 +691,35 @@ export const register: Register = on => {
           {banner}
           <Button label="x Close" hotkey="x" onPress={() => void $.ui.close({ id: PANE })} />
         </Box>
+        {/* `s` jumps into the field; Esc or Enter hands the keys back to the hotkeys. */}
+        <Box flexDirection="row" gap={1}>
+          <Button
+            key="search-button"
+            label="s Search"
+            hotkey="s"
+            onPress={() => void $.ui.focus({ requestId: PANE, key: searchKey })}
+          />
+          <Box flexGrow={1}>
+            <Input
+              key={searchKey}
+              placeholder="title, prompt, repo, branch or folder"
+              value={query}
+              submitLabel="done"
+              onInput={value => void setQuery($, value)}
+              onSubmit={value =>
+                void setQuery($, value)
+                  .then(() => update($, search, s => ({ ...s, rev: (s.rev ?? 0) + 1 })))
+                  .then(() => (firstMatch ? $.ui.focus({ requestId: PANE, key: firstMatch }) : undefined))
+              }
+            />
+          </Box>
+        </Box>
         {error &&<Text color="red">{oneLine(error, 200)}</Text>}
         {checkedAt === 0 && <Text dimColor>Looking for sessions…</Text>}
-        {checkedAt > 0 && others.length === 0 && <Text dimColor>No other Claude Code sessions running.</Text>}
+        {checkedAt > 0 && !q && others.length === 0 && <Text dimColor>No other Claude Code sessions running.</Text>}
+        {q && all && allRecent.length > 0 && list.length + recent.length === 0 && (
+          <Text dimColor>No session matches “{oneLine(q, 60)}”.</Text>
+        )}
         {list.map(s => {
           const index = others.indexOf(s)
           const isBusy = s.status === 'busy'
@@ -682,10 +769,12 @@ export const register: Register = on => {
             </Box>
           )
         })}
-        {all && recent.length === 0 && <Text dimColor>Reading session history…</Text>}
+        {all && allRecent.length === 0 && <Text dimColor>Reading session history…</Text>}
         {recent.length > 0 && (
           <Text bold dimColor>
-            {all ? `History · ${recent.length} sessions` : 'Recent'}
+            {q
+              ? `Matches · ${recent.length} of ${allRecent.length} past sessions`
+              : all ? `History · ${recent.length} sessions` : 'Recent'}
           </Text>
         )}
         {recent.map((r, i) => {

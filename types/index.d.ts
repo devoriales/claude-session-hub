@@ -36,6 +36,8 @@ export type RecentInfo = {
   repo?: string
   branch?: string
   prompts: string[]
+  /** Every prompt read from the transcript (its last 25), for search; `prompts` is what is shown. */
+  allPrompts?: string[]
   activeAt: number
   pr?: PrInfo
 }
@@ -49,6 +51,14 @@ export type Snapshot = {
   checkedAt: number
 }
 
+/** What the search field holds; `auto` when typing it switched to the full history. */
+export type Search = {
+  query: string
+  auto?: boolean
+  /** Bumped on Enter: a field submits empty, so a new key draws the text again. */
+  rev?: number
+}
+
 /**
  * The Recent row whose Resume was pressed once and waits for a second press
  * to really open a terminal; `sessionId` absent when none is waiting.
@@ -60,6 +70,6 @@ export type Armed = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-hub': { snapshot: Shaped<Snapshot>; armed: Shaped<Armed> }
+    'session-hub': { snapshot: Shaped<Snapshot>; armed: Shaped<Armed>; search: Shaped<Search> }
   }
 }
