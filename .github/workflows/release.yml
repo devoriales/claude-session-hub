@@ -3,7 +3,7 @@ name: Release
 # On every push to main, semantic-release reads the commit messages since the
 # last tag (Conventional Commits: feat:, fix:, feat!:) and, when one calls for
 # it, sets the version in .claude-plugin/plugin.json, updates CHANGELOG.md,
-# tags vX.Y.Z and publishes a GitHub Release.
+# tags vX.Y.Z and publishes a GitHub Release. Configuration: .releaserc.json.
 on:
   push:
     branches: [main]
@@ -27,20 +27,13 @@ jobs:
           fetch-depth: 0 # semantic-release needs the full history and tags
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - name: Semantic release
+        uses: cycjimmy/semantic-release-action@d9bf53a078bd2f86aaffaec796dbb3d28f1b6f34 # v8.1.3
         with:
-          node-version: 20
-
-      - name: Validate the plugin manifest
-        run: node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/plugin.json','utf8'))"
-
-      - name: Release
+          semantic_version: 24.2.9
+          extra_plugins: |
+            @semantic-release/changelog@6.0.3
+            @semantic-release/git@10.0.1
+            @semantic-release/exec@6.0.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >
-          npx --yes
-          -p semantic-release@24.2.9
-          -p @semantic-release/changelog@6.0.3
-          -p @semantic-release/git@10.0.1
-          -p @semantic-release/exec@6.0.3
-          semantic-release
