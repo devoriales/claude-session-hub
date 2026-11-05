@@ -1,7 +1,7 @@
 {
   "name": "session-hub",
   "displayName": "Claude Session Hub",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "A pane listing every running Claude Code session on this machine (name, repo, branch, recent prompts and actions) with a Jump button to switch to it, plus recently ended sessions you can resume",
   "author": {
     "name": "Aleksandro Matejic"
