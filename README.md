@@ -1,9 +1,9 @@
-# claude-session-hub
+# Claude Session Hub
 
 See every Claude Code session running on your machine in one pane, and jump to
 any of them with a single key.
 
-![session-hub demo: /sessions opens the pane, listing running sessions and recent ones, and a recent session is resumed in place](docs/demo.gif)
+![Claude Session Hub demo: /sessions opens the pane, listing running sessions and recent ones, and a recent session is resumed in place](docs/demo.gif)
 
 <sub>Recorded with dummy repos in a sandbox; the PRs shown are made up. To re-record it, see [`demo/record.sh`](demo/record.sh).</sub>
 
@@ -38,7 +38,7 @@ while it is open.
 
 ## Requirements
 
-- **Claude Code 2.1.318 or newer.** session-hub is a *mod* (a plugin with a
+- **Claude Code 2.1.318 or newer.** Claude Session Hub is a *mod* (a plugin with a
   hooks module), an early-access feature of Claude Code.
 - **macOS or Linux.**
 - `git` (to show repo and branch).
@@ -52,17 +52,17 @@ while it is open.
 In Claude Code, type:
 
 ```
-/plugin install session-hub --marketplace devoriales/claude-session-hub
+/plugin install claude-session-hub --marketplace devoriales/claude-session-hub
 ```
 
 1. Answer `y` when asked to add the marketplace `github:devoriales/claude-session-hub`.
 2. Pick the **user** scope (press Enter), so it loads in every session.
-3. You should see `Installed session-hub. Plugin is now active.`
+3. You should see `Installed claude-session-hub. Plugin is now active.`
 
 Or install it from a shell:
 
 ```sh
-claude plugin install session-hub --marketplace devoriales/claude-session-hub
+claude plugin install claude-session-hub --marketplace devoriales/claude-session-hub
 ```
 
 **In the Claude desktop app:** click **+** next to the prompt box, then
@@ -137,8 +137,8 @@ Restart Claude Code after changing it.
 ## Update or remove
 
 ```
-/plugin update session-hub
-/plugin uninstall session-hub
+/plugin update claude-session-hub
+/plugin uninstall claude-session-hub
 ```
 
 ## How it works
@@ -152,7 +152,7 @@ Restart Claude Code after changing it.
   SDK) are left out.
 - Jumping and resuming are done by [`bin/jump.sh`](bin/jump.sh), a small POSIX shell script.
 
-Everything stays on your machine: session-hub makes no network calls.
+Everything stays on your machine: Claude Session Hub makes no network calls.
 
 ## Develop
 

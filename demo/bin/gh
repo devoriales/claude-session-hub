@@ -1,6 +1,6 @@
 #!/bin/sh
 # Stand-in for the GitHub CLI in the demo sandbox: the dummy repos have no real
-# GitHub remote, so this answers session-hub's `gh pr list --head <branch>` with
+# GitHub remote, so this answers Claude Session Hub's `gh pr list --head <branch>` with
 # a made-up PR per branch. Anything else fails like an unauthenticated gh.
 [ "$1" = "auth" ] && { [ "$2" = token ] && echo demo-token; exit 0; }
 [ "$1 $2" = "pr list" ] || { echo "gh (demo stub): not supported" >&2; exit 1; }

@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Armed, PrInfo, RecentInfo, Search, SessionInfo, Snapshot } from '../types'
 
-const PANE = 'session-hub'
+const PANE = 'claude-session-hub'
 const TITLE = 'Claude sessions'
 const POLL_MS = 5000
 // The size the pane asks for: rows when it sits above the prompt (the layout
@@ -57,7 +57,7 @@ const EYES = '#ff3b3b'
 // Change the shape tag whenever SessionInfo / Snapshot change: it declines
 // what an earlier version stored, which outlives a reload.
 const snapshot = atom(
-  { plugin: 'session-hub', key: 'snapshot' } as const,
+  { plugin: 'claude-session-hub', key: 'snapshot' } as const,
   { list: [], recent: [], all: false, checkedAt: 0 } as Snapshot,
   { shape: 'snapshot-5' },
 )
@@ -65,7 +65,7 @@ const snapshot = atom(
 // The search field's text. Searching reads the whole history, so typing the
 // first letter switches to it (`auto`) and clearing the field switches back.
 const search = atom(
-  { plugin: 'session-hub', key: 'search' } as const,
+  { plugin: 'claude-session-hub', key: 'search' } as const,
   { query: '' } as Search,
   { shape: 'search-1' },
 )
@@ -103,7 +103,7 @@ async function setQuery($: EngineInterface, query: string) {
 // the row and says what it would open, a second within ARM_MS opens it.
 const ARM_MS = 5000
 const armed = atom(
-  { plugin: 'session-hub', key: 'armed' } as const,
+  { plugin: 'claude-session-hub', key: 'armed' } as const,
   { at: 0 } as Armed,
   { shape: 'armed-1' },
 )
