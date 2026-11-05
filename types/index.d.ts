@@ -70,6 +70,6 @@ export type Armed = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'claude-session-hub': { snapshot: Shaped<Snapshot>; armed: Shaped<Armed>; search: Shaped<Search> }
+    'session-hub': { snapshot: Shaped<Snapshot>; armed: Shaped<Armed>; search: Shaped<Search> }
   }
 }

@@ -1,10 +1,12 @@
 {
   "name": "claude-session-hub",
   "description": "Claude Session Hub: a Claude Code pane that shows every running session and jumps to any of them",
-  "owner": { "name": "Aleksandro Matejic" },
+  "owner": {
+    "name": "Aleksandro Matejic"
+  },
   "plugins": [
     {
-      "name": "claude-session-hub",
+      "name": "session-hub",
       "source": "./",
       "description": "See every running Claude Code session in one pane and jump to any of them"
     }

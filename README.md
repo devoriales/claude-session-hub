@@ -32,7 +32,7 @@ For each session the pane shows:
 - its **last 3 tool calls** (commands run, files edited, ...)
 
 Busy sessions are listed first. Below them, a **Recent** section lists the 8
-most recent sessions that are no longer running (title, repo, branch, folder and
+(or [as many as you set](#settings)) most recent sessions that are no longer running (title, repo, branch, folder and
 last prompts and PR), each with a **Resume** button. The pane refreshes every 5 seconds
 while it is open.
 
@@ -52,17 +52,17 @@ while it is open.
 In Claude Code, type:
 
 ```
-/plugin install claude-session-hub --marketplace devoriales/claude-session-hub
+/plugin install session-hub --marketplace devoriales/claude-session-hub
 ```
 
 1. Answer `y` when asked to add the marketplace `github:devoriales/claude-session-hub`.
 2. Pick the **user** scope (press Enter), so it loads in every session.
-3. You should see `Installed claude-session-hub. Plugin is now active.`
+3. You should see `Installed session-hub. Plugin is now active.`
 
 Or install it from a shell:
 
 ```sh
-claude plugin install claude-session-hub --marketplace devoriales/claude-session-hub
+claude plugin install session-hub --marketplace devoriales/claude-session-hub
 ```
 
 **In the Claude desktop app:** click **+** next to the prompt box, then
@@ -74,7 +74,7 @@ claude plugin install claude-session-hub --marketplace devoriales/claude-session
    until you open it.
 2. Press `ctrl+x tab` (or click the pane) to give it the keyboard.
 3. Press `1`–`9`, or click **Jump**, to switch to that session.
-4. Press `a`–`h`, or click **Resume**, to reopen a recent session. The first
+4. Press `a`, `b`, `c`, …, or click **Resume**, to reopen a recent session. The first
    press only marks the row (`▶`, button turns to **Open?**) and says what it
    would open; press the same key again within 5 seconds to confirm. A session
    from the same folder as this one is resumed **right here** (like `/resume <id>`,
@@ -86,16 +86,17 @@ claude plugin install claude-session-hub --marketplace devoriales/claude-session
    a new tmux window or your terminal on Linux). If no terminal can be opened, the command is
    copied to your clipboard instead.
 5. Type `/sessions -a` (or `--all`) to list **every** past session instead of
-   just the 8 most recent, newest first. The pane scrolls (arrow keys once it
-   has focus); the first 8 rows keep their `a`–`h` hotkeys, the rest have a
-   **Resume** button to click. Only those first 8 get a PR lookup. The first
+   just the most recent, newest first. The pane scrolls (arrow keys once it
+   has focus); the first rows (as many as `recentCount`) keep their letter
+   hotkeys, the rest have a **Resume** button to click. Only those first rows
+   get a PR lookup. The first
    time, reading all transcripts can take a few seconds. Type `/sessions` to
    go back to the short list.
 6. **Search:** press `s` (or click **s Search**) and type. The list narrows as
    you type to the sessions, running or past, whose title, prompts, repo,
    branch or folder contain **every** word you typed, in any order, ignoring
    case (`acme timeout`). Searching covers the whole history, not just the
-   newest 8. The `1`–`9` and `a`–`h` hotkeys follow the rows that match. Press
+   newest few. The `1`–`9` and letter hotkeys follow the rows that match. Press
    Enter to move onto the first match (Enter again presses its button), `s` to
    change the search, and clear the field to see everything again. Or search
    straight from the prompt: `/sessions checkout timeout`.
@@ -121,6 +122,29 @@ The session you are in is listed last, marked `(this session)`.
 On macOS, the first jump may ask you to let Claude Code control iTerm2 or
 Terminal (System Settings → Privacy & Security → Automation). Allow it.
 
+### Settings
+
+Three settings change how much the pane shows:
+
+| Setting | Default | What it sets |
+| --- | --- | --- |
+| `recentCount` | 8 | How many ended sessions **Recent** lists, 1–24. Each gets a letter hotkey: `a`, `b`, `c`, … (`s` and `x` are skipped, they are Search and Close). |
+| `promptCount` | 3 | How many of a running session's last prompts each row shows, 0–10. A past session shows one fewer. |
+| `actionCount` | 3 | How many of a running session's last tool calls each row shows, 0–10. |
+
+Change them in Claude Code with `/config` (they are listed under the plugin), or
+from a shell:
+
+```sh
+claude plugin configure session-hub@claude-session-hub              # show the settings and their values
+echo '{"recentCount":"12","promptCount":"1"}' \
+  | claude plugin configure session-hub@claude-session-hub --values-stdin
+```
+
+They are saved in `~/.claude/settings.json` under `pluginConfigs`. They are read
+when a session starts, so type `/reload-plugins` (or restart Claude Code) after
+changing them.
+
 ### Choosing the terminal
 
 On macOS, new windows (Resume, and attaching to a background session) open in
@@ -137,8 +161,8 @@ Restart Claude Code after changing it.
 ## Update or remove
 
 ```
-/plugin update claude-session-hub
-/plugin uninstall claude-session-hub
+/plugin update session-hub
+/plugin uninstall session-hub
 ```
 
 ## How it works

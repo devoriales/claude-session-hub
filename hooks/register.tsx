@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Armed, PrInfo, RecentInfo, Search, SessionInfo, Snapshot } from '../types'
 
-const PANE = 'claude-session-hub'
+const PANE = 'session-hub'
 const TITLE = 'Claude sessions'
 const POLL_MS = 5000
 // The size the pane asks for: rows when it sits above the prompt (the layout
@@ -14,18 +14,25 @@ const PANE_COLUMNS = 100
 const GIT_TTL_MS = 30000
 // `gh` goes to the network; ask about each branch at most once a minute.
 const PR_TTL_MS = 60000
-const RECENT_MAX = 8
-// `/sessions -a` lists every past session; only the newest few get a PR lookup,
-// since `gh` goes to the network.
-const HISTORY_PR_MAX = RECENT_MAX
-// Hotkeys for the Recent rows; digits belong to the running sessions' Jump.
-const RECENT_KEYS = 'abcdefgh'
+// Hotkeys for the Recent rows; digits belong to the running sessions' Jump,
+// s to Search and x to Close.
+const RECENT_KEYS = 'abcdefghijklmnopqrtuvwyz'
+
+// The options in plugin.json `userConfig`, set in /config or with
+// `claude plugin configure`; read once when the module loads.
+const config = { recentCount: 8, promptCount: 3, actionCount: 3 }
+// The last n items; slice(-0) would be all of them.
+const lastN = <T,>(items: T[], n: number) => (n > 0 ? items.slice(-n) : [])
+const clampInt = (value: unknown, min: number, max: number, fallback: number) => {
+  const n = Math.round(Number(value))
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback
+}
 // `/sessions close` (or off / hide) closes the pane from the prompt.
 const CLOSE_ARGS = new Set(['close', 'off', 'hide'])
 const HELP_ARGS = new Set(['help', '-h', '--help'])
 const USAGE = [
   'Usage: /sessions [-a | <search words> | close | help]',
-  '  /sessions          open the pane: running sessions and the 8 most recent ones',
+  '  /sessions          open the pane: running sessions and the most recent ones',
   '  /sessions -a       list every past session (also --all)',
   '  /sessions <words>  search every session (title, prompts, repo, branch, folder)',
   '  /sessions close    close the pane (also off, hide); x or Esc in the pane does too',
@@ -57,7 +64,7 @@ const EYES = '#ff3b3b'
 // Change the shape tag whenever SessionInfo / Snapshot change: it declines
 // what an earlier version stored, which outlives a reload.
 const snapshot = atom(
-  { plugin: 'claude-session-hub', key: 'snapshot' } as const,
+  { plugin: 'session-hub', key: 'snapshot' } as const,
   { list: [], recent: [], all: false, checkedAt: 0 } as Snapshot,
   { shape: 'snapshot-5' },
 )
@@ -65,7 +72,7 @@ const snapshot = atom(
 // The search field's text. Searching reads the whole history, so typing the
 // first letter switches to it (`auto`) and clearing the field switches back.
 const search = atom(
-  { plugin: 'claude-session-hub', key: 'search' } as const,
+  { plugin: 'session-hub', key: 'search' } as const,
   { query: '' } as Search,
   { shape: 'search-1' },
 )
@@ -103,7 +110,7 @@ async function setQuery($: EngineInterface, query: string) {
 // the row and says what it would open, a second within ARM_MS opens it.
 const ARM_MS = 5000
 const armed = atom(
-  { plugin: 'claude-session-hub', key: 'armed' } as const,
+  { plugin: 'session-hub', key: 'armed' } as const,
   { at: 0 } as Armed,
   { shape: 'armed-1' },
 )
@@ -200,7 +207,7 @@ const parseTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> => {
     }
   }
 
-  return { title, cwd, branch, automated, prompts: prompts.slice(-3), allPrompts: prompts, actions: actions.slice(-3) }
+  return { title, cwd, branch, automated, prompts: lastN(prompts, config.promptCount), allPrompts: prompts, actions: lastN(actions, config.actionCount) }
 }
 
 const SESSION_FILE = /\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
@@ -291,7 +298,8 @@ async function recentSessions(
       cwd: tilde(info.cwd, home),
       repo,
       branch: info.branch,
-      prompts: info.prompts.slice(all ? -1 : -2),
+      // A past session shows one prompt fewer than a running one; the full history only its last.
+      prompts: lastN(info.prompts, all ? Math.min(1, config.promptCount) : Math.max(0, config.promptCount - 1)),
       allPrompts: info.allPrompts,
       activeAt: mtimeMs,
     }
@@ -300,15 +308,16 @@ async function recentSessions(
 
   const found: NonNullable<Awaited<ReturnType<typeof toRow>>>[] = []
   for (let i = 0; i < files.length; i += BATCH) {
-    if (!all && found.length >= RECENT_MAX) break
+    if (!all && found.length >= config.recentCount) break
     const rows = await Promise.all(files.slice(i, i + BATCH).map(toRow))
     for (const row of rows) if (row) found.push(row)
     if (all && progress) await progress(found.map(r => r.item))
   }
-  const top = found.slice(0, all ? found.length : RECENT_MAX)
+  const top = found.slice(0, all ? found.length : config.recentCount)
 
   await Promise.all(
-    top.slice(0, HISTORY_PR_MAX).map(r => prInfo($, r.cwd, r.branch, now).then(pr => void (r.item.pr = pr))),
+    // `gh` goes to the network: in the full history only the newest rows get a PR lookup.
+    top.slice(0, config.recentCount).map(r => prInfo($, r.cwd, r.branch, now).then(pr => void (r.item.pr = pr))),
   )
   return top.map(r => r.item)
 }
@@ -570,7 +579,11 @@ function PrLine({ pr, els }: { pr: PrInfo; els: { Box: any; Text: any; Link: any
   )
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  config.recentCount = clampInt(options.recentCount, 1, RECENT_KEYS.length, 8)
+  config.promptCount = clampInt(options.promptCount, 0, 10, 3)
+  config.actionCount = clampInt(options.actionCount, 0, 10, 3)
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'sessions',
@@ -614,9 +627,9 @@ export const register: Register = on => {
 
     return {
       text: query
-        ? `Sessions pane opened, searching every session for “${query}”. Press a–h or click Resume to reopen one. x or Esc closes it.`
+        ? `Sessions pane opened, searching every session for “${query}”. Press a row letter or click Resume to reopen one. x or Esc closes it.`
         : all
-        ? 'Sessions pane opened with every past session. Press a–h or click Resume to reopen one; arrows scroll. /sessions shows recent only again. x or Esc closes it.'
+        ? 'Sessions pane opened with every past session. Press a row letter or click Resume to reopen one; arrows scroll. /sessions shows recent only again. x or Esc closes it.'
         : 'Sessions pane opened. Press a number (or click Jump) to switch; x or Esc closes it.',
     }
   })

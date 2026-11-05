@@ -1,11 +1,41 @@
 {
-  "name": "claude-session-hub",
-  "version": "0.5.0",
+  "name": "session-hub",
+  "displayName": "Claude Session Hub",
+  "version": "0.6.0",
   "description": "A pane listing every running Claude Code session on this machine (name, repo, branch, recent prompts and actions) with a Jump button to switch to it, plus recently ended sessions you can resume",
-  "author": { "name": "Aleksandro Matejic" },
+  "author": {
+    "name": "Aleksandro Matejic"
+  },
   "homepage": "https://github.com/devoriales/claude-session-hub",
   "repository": "https://github.com/devoriales/claude-session-hub",
   "license": "MIT",
-  "keywords": ["sessions", "pane", "dashboard", "tmux", "iterm2", "vscode"],
-  "types": "./types/index.d.ts"
+  "keywords": [
+    "sessions",
+    "pane",
+    "dashboard",
+    "tmux",
+    "iterm2",
+    "vscode"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "recentCount": {
+      "type": "number",
+      "title": "Recent sessions shown",
+      "description": "How many ended sessions the Recent list shows, 1 to 24. Each gets a letter hotkey (a, b, c, … skipping s and x). Default 8.",
+      "default": 8
+    },
+    "promptCount": {
+      "type": "number",
+      "title": "Prompts per session",
+      "description": "How many of a running session's last prompts each row shows, 0 to 10; a past session shows one fewer. Default 3.",
+      "default": 3
+    },
+    "actionCount": {
+      "type": "number",
+      "title": "Tool calls per session",
+      "description": "How many of a running session's last tool calls (commands run, files edited) each row shows, 0 to 10. Default 3.",
+      "default": 3
+    }
+  }
 }
