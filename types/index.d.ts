@@ -11,6 +11,9 @@ export type PrInfo = {
   review?: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED'
 }
 
+/** Which CLI a session belongs to. */
+export type Tool = 'claude' | 'codex'
+
 export type SessionInfo = {
   sessionId: string
   pid: number
@@ -22,6 +25,9 @@ export type SessionInfo = {
   kind: string
   status: string
   isSelf: boolean
+  tool: Tool
+  /** Set when this pid holds several Codex transcripts: Jump can't tell the windows apart. */
+  pidShared?: boolean
   prompts: string[]
   actions: string[]
   activeAt: number
@@ -31,6 +37,7 @@ export type SessionInfo = {
 /** A session that is no longer running, read from its transcript. */
 export type RecentInfo = {
   sessionId: string
+  tool: Tool
   title?: string
   cwd: string
   repo?: string
@@ -47,6 +54,8 @@ export type Snapshot = {
   recent: RecentInfo[]
   /** Set by `/sessions -a`: `recent` holds every past session, not just the newest few. */
   all?: boolean
+  /** Codex support is on and `$CODEX_HOME/sessions` exists; rows carry tool tags. */
+  codexActive?: boolean
   error?: string
   checkedAt: number
 }
