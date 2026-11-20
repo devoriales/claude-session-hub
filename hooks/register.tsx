@@ -313,10 +313,18 @@ const CODEX_INDEX = `tail -n 2000 "$1/session_index.jsonl" 2>/dev/null || true`
 // A running Codex session holds its rollout file open; lsof is the only
 // process-to-session map Codex offers. -F gives one field per line: p pid,
 // c command, n path. No lsof, or none open, prints nothing.
-// "nolsof" tells the caller liveness is UNKNOWN, as opposed to "none running":
-// without it, a live session would be offered under Recent with a working Resume.
+// "nolsof" (not installed) and "lsoffail" (ran but errored) tell the caller
+// liveness is UNKNOWN, as opposed to "none running": without them, a live
+// session would be offered under Recent with a working Resume. lsof exits 1
+// both for "no matches" and for errors, so an error is a nonzero exit THAT
+// ALSO wrote to stderr; a clean no-match run writes nothing there.
 const LSOF_CODEX = `command -v lsof >/dev/null 2>&1 || { echo nolsof; exit 0; }
-lsof -Fpcn +D "$1/sessions" 2>/dev/null || true`
+exec 4>&1
+err=$(lsof -Fpcn +D "$1/sessions" 2>&1 1>&4)
+rc=$?
+exec 4>&-
+if [ "$rc" -ne 0 ] && [ -n "$err" ]; then echo lsoffail; fi
+exit 0`
 
 // lsof -Fpcn output -> one entry per open rollout file, with how many files
 // its pid holds (a shared daemon pid can't be focused unambiguously).
@@ -594,7 +602,7 @@ async function refresh($: EngineInterface) {
       const lres = await $.process
         .run(['sh', '-c', LSOF_CODEX, 'lsof-codex', codex], { timeoutMs: 10000 })
         .catch(() => undefined)
-      codexLive = lres !== undefined && !lres.stdout.startsWith('nolsof')
+      codexLive = lres !== undefined && !/^(nolsof|lsoffail)$/m.test(lres.stdout)
       const open = parseLsof(lres?.stdout ?? '')
       const perPid = new Map<number, number>()
       for (const o of open) perPid.set(o.pid, (perPid.get(o.pid) ?? 0) + 1)

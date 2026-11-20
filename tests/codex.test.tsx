@@ -330,3 +330,21 @@ test('a recent codex row shows the branch recorded at session start', async ($, 
   expect(await ui.find({ type: 'Text', text: /np-fix/ })).toBeDefined()
   await ui.unmount()
 })
+
+test('a failing lsof also makes codex rows copy-only', async ($, on) => {
+  const calls: string[] = []
+  const copied: string[] = []
+  world(on, {
+    'lsof-codex': 'lsoffail\n', // the snippet's marker: lsof ran and errored
+    'newest-codex': `1790001000 ${CODEX_PATH}\n`,
+    'peek-codex': codexPeek,
+    'codex-index': codexIndex,
+  }, calls, copied)
+  const ui = await openPane($)
+
+  await ui.press({ key: `resume-${CODEX_SID}` })
+  await ui.press({ key: `resume-${CODEX_SID}` })
+  expect(calls.some(c => c.includes('jump.sh'))).toBe(false)
+  expect(copied[0]).toBe(`cd "/home/u/api" && codex resume ${CODEX_SID}`)
+  await ui.unmount()
+})
