@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Armed, PrInfo, RecentInfo, Search, SessionInfo, Snapshot } from '../types'
+import type { Armed, PrInfo, RecentInfo, Search, SessionInfo, Snapshot, Tool } from '../types'
 
 const PANE = 'session-hub'
 const TITLE = 'Claude sessions'
@@ -20,7 +20,7 @@ const RECENT_KEYS = 'abcdefghijklmnopqrtuvwyz'
 
 // The options in plugin.json `userConfig`, set in /config or with
 // `claude plugin configure`; read once when the module loads.
-const config = { recentCount: 8, promptCount: 3, actionCount: 3 }
+const config = { recentCount: 8, promptCount: 3, actionCount: 3, showCodex: true }
 // The last n items; slice(-0) would be all of them.
 const lastN = <T,>(items: T[], n: number) => (n > 0 ? items.slice(-n) : [])
 const clampInt = (value: unknown, min: number, max: number, fallback: number) => {
@@ -68,7 +68,7 @@ const EYES = '#ff3b3b'
 const snapshot = atom(
   { plugin: 'session-hub', key: 'snapshot' } as const,
   { list: [], recent: [], all: false, checkedAt: 0 } as Snapshot,
-  { shape: 'snapshot-5' },
+  { shape: 'snapshot-6' },
 )
 
 // The search field's text. Searching reads the whole history, so typing the
@@ -136,6 +136,11 @@ type TranscriptInfo = {
   branch?: string
   // Started by an SDK script (`claude -p`, Agent SDK) rather than a person.
   automated?: boolean
+  // Codex only: who started the thread ("user") and from where ("codex-tui", "vscode").
+  threadSource?: string
+  source?: string
+  // Codex only: the newest task event; "started" with no "complete" after it means busy.
+  lastTask?: 'started' | 'complete'
   prompts: string[]
   allPrompts?: string[]
   actions: string[]
@@ -212,7 +217,131 @@ const parseTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> => {
   return { title, cwd, branch, automated, prompts: lastN(prompts, config.promptCount), allPrompts: prompts, actions: lastN(actions, config.actionCount) }
 }
 
+// A Codex tool call: `name` plus `input` (a code string) or `arguments` (a JSON string).
+const describeCodexTool = (payload: any): string | undefined => {
+  if (typeof payload?.name !== 'string') return undefined
+  let pick: unknown = typeof payload.input === 'string' ? payload.input : undefined
+  if (!pick && typeof payload.arguments === 'string') {
+    try {
+      const args = JSON.parse(payload.arguments)
+      pick = ['description', 'command', 'cmd', 'file_path', 'path', 'pattern', 'query', 'prompt']
+        .map(k => args?.[k])
+        .find(v => typeof v === 'string' && v.length > 0)
+    } catch {
+      /* not JSON: show just the name */
+    }
+  }
+  return typeof pick === 'string' && pick ? `${payload.name}: ${oneLine(pick, 70)}` : payload.name
+}
+
+// PEEK_CODEX's output: session_meta, user messages, tool calls, last task event.
+const parseCodexTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> => {
+  let cwd: string | undefined
+  let branch: string | undefined
+  let threadSource: string | undefined
+  let source: string | undefined
+  let lastTask: TranscriptInfo['lastTask']
+  const prompts: string[] = []
+  const actions: string[] = []
+
+  for (const line of stdout.split('\n')) {
+    if (line === '"type":"task_started"') lastTask = 'started'
+    // An interrupted turn ends it too; without this an abort leaves "busy" stuck.
+    if (line === '"type":"task_complete"' || line === '"type":"turn_aborted"') lastTask = 'complete'
+    if (!line.startsWith('{')) continue
+    let row: any
+    try {
+      row = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const payload = row?.payload
+    if (row?.type === 'session_meta' && payload) {
+      if (typeof payload.cwd === 'string') cwd = payload.cwd
+      if (typeof payload.thread_source === 'string') threadSource = payload.thread_source
+      if (typeof payload.source === 'string') source = payload.source
+      else if (typeof payload.originator === 'string') source = payload.originator
+      // The branch the session was started on; the folder's current checkout
+      // may have moved on since.
+      if (typeof payload.git?.branch === 'string' && payload.git.branch !== 'HEAD') branch = payload.git.branch
+    }
+    if (payload?.role === 'user' && Array.isArray(payload.content)) {
+      for (const block of payload.content) {
+        const text = block?.type === 'input_text' ? block.text : undefined
+        // Codex injects AGENTS.md and <environment_context>-style messages as "user".
+        if (typeof text !== 'string' || /^(<|# AGENTS\.md)/.test(text)) continue
+        const flat = oneLine(text, 90)
+        if (flat && prompts.at(-1) !== flat) prompts.push(flat)
+      }
+    }
+    if (['custom_tool_call', 'function_call', 'local_shell_call'].includes(payload?.type)) {
+      const described = describeCodexTool(payload)
+      if (described) actions.push(described)
+    }
+  }
+
+  return { cwd, branch, threadSource, source, lastTask, prompts: lastN(prompts, config.promptCount), allPrompts: prompts, actions: lastN(actions, config.actionCount) }
+}
+
 const SESSION_FILE = /\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
+
+// Codex (the OpenAI CLI) writes transcripts to
+// $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl.
+const CODEX_FILE = /\/rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
+
+// The newest Codex transcripts, same "<mtime seconds> <path>" lines as NEWEST.
+const NEWEST_CODEX = `d="$1/sessions"
+[ -d "$d" ] || exit 0
+if [ "$(uname -s)" = Darwin ]; then
+  find "$d" -mindepth 4 -maxdepth 4 -name 'rollout-*.jsonl' -exec stat -f '%m %N' {} +
+else
+  find "$d" -mindepth 4 -maxdepth 4 -name 'rollout-*.jsonl' -printf '%T@ %p\\n'
+fi | sort -rn | if [ "$2" -gt 0 ]; then head -n "$2"; else cat; fi`
+
+// The interesting lines of a Codex transcript: the session_meta header, the
+// newest user prompts and tool calls, and the last task started/complete
+// event (busy or idle).
+const PEEK_CODEX = `f="$1"
+head -n 1 "$f"
+grep -F '"role":"user"' "$f" | tail -n 25
+tail -c 400000 "$f" | grep -E '"type":"(custom_tool_call|function_call|local_shell_call)"' | tail -n 8
+tail -c 100000 "$f" | grep -oE '"type":"(task_started|task_complete|turn_aborted)"' | tail -n 1`
+
+// Codex keeps each session's title here; ids repeat, the newest line wins.
+const CODEX_INDEX = `tail -n 2000 "$1/session_index.jsonl" 2>/dev/null || true`
+
+// A running Codex session holds its rollout file open; lsof is the only
+// process-to-session map Codex offers. -F gives one field per line: p pid,
+// c command, n path. No lsof, or none open, prints nothing.
+// "nolsof" (not installed) and "lsoffail" (ran but errored) tell the caller
+// liveness is UNKNOWN, as opposed to "none running": without them, a live
+// session would be offered under Recent with a working Resume. lsof exits 1
+// both for "no matches" and for errors, so an error is a nonzero exit THAT
+// ALSO wrote to stderr; a clean no-match run writes nothing there.
+const LSOF_CODEX = `command -v lsof >/dev/null 2>&1 || { echo nolsof; exit 0; }
+exec 4>&1
+err=$(lsof -Fpcn +D "$1/sessions" 2>&1 1>&4)
+rc=$?
+exec 4>&-
+if [ "$rc" -ne 0 ] && [ -n "$err" ]; then echo lsoffail; fi
+exit 0`
+
+// lsof -Fpcn output -> one entry per open rollout file, with how many files
+// its pid holds (a shared daemon pid can't be focused unambiguously).
+const parseLsof = (stdout: string) => {
+  let pid = 0
+  let command = ''
+  // By session id: one file on several descriptors (or pids) is one session.
+  const open = new Map<string, { pid: number; path: string; sid: string }>()
+  for (const line of stdout.split('\n')) {
+    if (line.startsWith('p')) pid = Number(line.slice(1))
+    if (line.startsWith('c')) command = line.slice(1)
+    if (!line.startsWith('n') || !command.includes('codex')) continue // skips our own grep/tail peeks
+    const sid = CODEX_FILE.exec(line.slice(1))?.[1]
+    if (sid && pid > 0 && !open.has(sid)) open.set(sid, { pid, path: line.slice(1), sid })
+  }
+  return [...open.values()]
+}
 
 // Claude Code names a session "<folder>-<short code>" (e.g. "lime-cloud-cf");
 // show just the folder. A name set any other way is shown as given.
@@ -255,13 +384,38 @@ async function transcriptPath($: EngineInterface, base: string, cwd: string, sid
 }
 
 // Reads a transcript's title, prompts and actions, re-reading it only when it changed.
-async function readTranscript($: EngineInterface, sid: string, path: string, mtimeMs: number) {
+async function readTranscript($: EngineInterface, sid: string, path: string, mtimeMs: number, tool: Tool = 'claude') {
   const cached = transcripts.get(sid)
   if (cached && cached.mtimeMs === mtimeMs) return cached
-  const peek = await $.process.run(['sh', '-c', PEEK, 'peek', path], { timeoutMs: 10000 })
-  const info: TranscriptInfo = { mtimeMs, ...parseTranscript(peek.stdout) }
+  const [script, name, parse] =
+    tool === 'codex' ? ([PEEK_CODEX, 'peek-codex', parseCodexTranscript] as const) : ([PEEK, 'peek', parseTranscript] as const)
+  const peek = await $.process.run(['sh', '-c', script, name, path], { timeoutMs: 10000 })
+  const info: TranscriptInfo = { mtimeMs, ...parse(peek.stdout) }
   transcripts.set(sid, info)
   return info
+}
+
+// $CODEX_HOME, else ~/.codex; Codex support is active when its sessions dir exists.
+async function codexBase($: EngineInterface, home: string | undefined) {
+  if (!config.showCodex) return undefined
+  const base = (await $.env.get('CODEX_HOME')) ?? `${home}/.codex`
+  return (await $.fs.exists(`${base}/sessions`).catch(() => false)) ? base : undefined
+}
+
+// Codex session titles, newest line per id wins.
+async function codexTitles($: EngineInterface, base: string) {
+  const res = await $.process.run(['sh', '-c', CODEX_INDEX, 'codex-index', base], { timeoutMs: 10000 }).catch(() => undefined)
+  const titles = new Map<string, string>()
+  for (const line of (res?.stdout ?? '').split('\n')) {
+    if (!line.startsWith('{')) continue
+    try {
+      const row = JSON.parse(line)
+      if (typeof row?.id === 'string' && typeof row?.thread_name === 'string') titles.set(row.id, row.thread_name)
+    } catch {
+      /* a cut or foreign line */
+    }
+  }
+  return titles
 }
 
 // The newest sessions that are not running, with at least one prompt; every
@@ -273,39 +427,51 @@ const BATCH = 8
 async function recentSessions(
   $: EngineInterface,
   base: string,
+  codex: string | undefined,
+  titles: Map<string, string> | undefined,
   running: Set<string>,
   home: string | undefined,
   now: number,
   all: boolean,
   progress?: (rows: RecentInfo[]) => Promise<unknown>,
 ) {
-  const res = await $.process.run(['sh', '-c', NEWEST, 'newest', base, all ? '0' : '60'], {
-    timeoutMs: all ? 30000 : 10000,
-  })
-  const files = res.stdout.split('\n').flatMap(line => {
-    const space = line.indexOf(' ')
-    const path = line.slice(space + 1)
-    const sid = SESSION_FILE.exec(path)?.[1]
-    if (space < 0 || !sid || running.has(sid)) return []
-    return [{ sid, path, mtimeMs: Math.round(Number(line.slice(0, space)) * 1000) }]
-  })
+  const limit = all ? '0' : '60'
+  const timeoutMs = all ? 30000 : 10000
+  const [res, codexRes] = await Promise.all([
+    $.process.run(['sh', '-c', NEWEST, 'newest', base, limit], { timeoutMs }),
+    codex ? $.process.run(['sh', '-c', NEWEST_CODEX, 'newest-codex', codex, limit], { timeoutMs }).catch(() => undefined) : undefined,
+  ])
+  const parseFind = (stdout: string, tool: Tool) =>
+    stdout.split('\n').flatMap(line => {
+      const space = line.indexOf(' ')
+      const path = line.slice(space + 1)
+      const sid = (tool === 'codex' ? CODEX_FILE : SESSION_FILE).exec(path)?.[1]
+      if (space < 0 || !sid || running.has(sid)) return []
+      return [{ sid, path, tool, mtimeMs: Math.round(Number(line.slice(0, space)) * 1000) }]
+    })
+  const files = [...parseFind(res.stdout, 'claude'), ...parseFind(codexRes?.stdout ?? '', 'codex')]
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
 
-  const toRow = async ({ sid, path, mtimeMs }: (typeof files)[number]) => {
-    const info = await readTranscript($, sid, path, mtimeMs).catch(() => undefined)
+  const toRow = async ({ sid, path, tool, mtimeMs }: (typeof files)[number]) => {
+    const info = await readTranscript($, sid, path, mtimeMs, tool).catch(() => undefined)
     if (!info?.cwd || info.automated || info.prompts.length === 0) return undefined
-    const { repo } = await gitInfo($, info.cwd, now)
+    // Codex harness runs (`codex exec`, subtasks) are not resumable conversations.
+    if (tool === 'codex' && info.threadSource && info.threadSource !== 'user') return undefined
+    const { repo, branch: cwdBranch } = await gitInfo($, info.cwd, now)
+    const branch = info.branch ?? (tool === 'codex' ? cwdBranch : undefined)
     const item: RecentInfo = {
       sessionId: sid,
-      title: info.title,
+      tool,
+      title: tool === 'codex' ? titles?.get(sid) : info.title,
       cwd: tilde(info.cwd, home),
       repo,
-      branch: info.branch,
+      branch,
       // A past session shows one prompt fewer than a running one; the full history only its last.
       prompts: lastN(info.prompts, all ? Math.min(1, config.promptCount) : Math.max(0, config.promptCount - 1)),
       allPrompts: info.allPrompts,
       activeAt: mtimeMs,
     }
-    return { item, cwd: info.cwd, branch: info.branch }
+    return { item, cwd: info.cwd, branch }
   }
 
   const found: NonNullable<Awaited<ReturnType<typeof toRow>>>[] = []
@@ -390,6 +556,7 @@ async function refresh($: EngineInterface) {
     const selfId: string = await $.session.id()
     const home = await $.env.get('HOME')
     const base = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${home}/.claude`
+    const codex = await codexBase($, home)
     const { all = false } = await read($, snapshot)
 
     const res = await $.process.run(['claude', 'agents', '--json'], { timeoutMs: 15000 })
@@ -418,12 +585,56 @@ async function refresh($: EngineInterface) {
         kind: row.kind,
         status: row.status ?? 'unknown',
         isSelf: row.sessionId === selfId,
+        tool: 'claude',
         prompts: info.prompts,
         actions: info.actions,
         activeAt: info.mtimeMs,
       }
       list.push(item)
       prJobs.push(prInfo($, row.cwd, branch, now).then(pr => void (item.pr = pr)))
+    }
+
+    const titles = codex ? await codexTitles($, codex) : undefined
+    // Whether running-Codex discovery actually ran: lsof present and answering.
+    // Unknown liveness means a "recent" Codex session may in fact be live.
+    let codexLive = false
+    if (codex) {
+      const lres = await $.process
+        .run(['sh', '-c', LSOF_CODEX, 'lsof-codex', codex], { timeoutMs: 10000 })
+        .catch(() => undefined)
+      codexLive = lres !== undefined && !/^(nolsof|lsoffail)$/m.test(lres.stdout)
+      const open = parseLsof(lres?.stdout ?? '')
+      const perPid = new Map<number, number>()
+      for (const o of open) perPid.set(o.pid, (perPid.get(o.pid) ?? 0) + 1)
+      for (const o of open) {
+        const { mtimeMs } = await $.fs.stat(o.path).catch(() => ({ mtimeMs: now }))
+        const info = await readTranscript($, o.sid, o.path, mtimeMs, 'codex').catch(() => undefined)
+        if (!info?.cwd) continue
+        const { repo, branch } = await gitInfo($, info.cwd, now)
+        const item: SessionInfo = {
+          sessionId: o.sid,
+          pid: o.pid,
+          name: info.cwd.split('/').filter(Boolean).pop() ?? o.sid.slice(0, 8),
+          title: titles?.get(o.sid),
+          cwd: tilde(info.cwd, home),
+          repo,
+          branch,
+          kind: info.source === 'vscode' ? 'vscode' : 'interactive',
+          // Codex reports no status; its transcript's task events are the best signal.
+          status:
+            info.lastTask === 'started' ? 'busy'
+            : info.lastTask === 'complete' ? 'idle'
+            : now - mtimeMs < 10000 ? 'busy' : 'idle',
+          isSelf: false,
+          tool: 'codex',
+          pidShared: (perPid.get(o.pid) ?? 0) > 1,
+          prompts: info.prompts,
+          actions: info.actions,
+          activeAt: mtimeMs,
+        }
+        list.push(item)
+        prJobs.push(prInfo($, info.cwd, branch, now).then(pr => void (item.pr = pr)))
+      }
     }
 
     // Busy first, then most recently active; this session last.
@@ -433,7 +644,7 @@ async function refresh($: EngineInterface) {
         Number(b.status === 'busy') - Number(a.status === 'busy') ||
         b.activeAt - a.activeAt,
     )
-    const running = new Set(rows.map(r => r.sessionId))
+    const running = new Set(list.map(r => r.sessionId))
     // Show the history as it is read the first time. Later polls already have a
     // full list on screen, so a shorter partial one is skipped rather than flashed;
     // so is any once the mode has flipped back.
@@ -445,16 +656,17 @@ async function refresh($: EngineInterface) {
       )
     // A failure here still lets the running sessions show; it is reported, not hidden.
     let historyError: string | undefined
-    const recent = await recentSessions($, base, running, home, now, all, progress).catch(error => {
+    const recent = await recentSessions($, base, codex, titles, running, home, now, all, progress).catch(error => {
       historyError = `Couldn't read session history: ${error instanceof Error ? error.message : String(error)}`
       return [] as RecentInfo[]
     })
     await Promise.all(prJobs)
+    const codexActive = codex !== undefined
     // If the mode flipped while this ran, keep the newer choice; the next tick fills it in.
     await update($, snapshot, s =>
       (s.all ?? false) === all
-        ? { list, recent, all, checkedAt: now, error: historyError }
-        : { ...s, list, checkedAt: now, error: historyError },
+        ? { list, recent, all, codexActive, codexLive, checkedAt: now, error: historyError }
+        : { ...s, list, codexActive, codexLive, checkedAt: now, error: historyError },
     )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -467,8 +679,17 @@ async function refresh($: EngineInterface) {
 async function jump($: EngineInterface, s: SessionInfo, surface: any) {
   const root: string = $.plugin.root
   const cwd = await expandHome($, s.cwd)
+  // A Codex daemon pid holding several transcripts could belong to any of
+  // their windows; focusing would guess, so hand over the folder instead.
+  if (s.tool === 'codex' && s.pidShared) {
+    const command = `cd ${JSON.stringify(cwd)}`
+    await $.ui.copy({ text: command, surface })
+    return $.ui.toast(`Can't tell ${s.name}'s window apart from another Codex session's. Copied: ${command}`, {
+      timeoutMs: 8000,
+    })
+  }
   const res = await $.process
-    .run(['sh', `${root}/bin/jump.sh`, String(s.pid), s.kind, s.sessionId, cwd], { timeoutMs: 15000 })
+    .run(['sh', `${root}/bin/jump.sh`, String(s.pid), s.kind, s.sessionId, cwd, s.tool], { timeoutMs: 15000 })
     .catch((error: unknown) => ({ exitCode: 1, stdout: '', stderr: String(error) }))
   const [verdict, ...rest] = res.stdout.trim().split(' ')
   const how = rest.join(' ')
@@ -476,7 +697,9 @@ async function jump($: EngineInterface, s: SessionInfo, surface: any) {
   if (verdict === 'focused') return $.ui.toast(`Switched to ${s.name} (${how})`)
   if (verdict === 'opened') return $.ui.toast(`Opened ${s.name} in a new ${how} window`)
 
-  const command = s.kind === 'interactive' ? `cd ${JSON.stringify(cwd)}` : `claude attach ${s.sessionId}`
+  // Never `codex resume` here: against a live session it could fork the thread.
+  const command =
+    s.tool === 'codex' || s.kind === 'interactive' ? `cd ${JSON.stringify(cwd)}` : `claude attach ${s.sessionId}`
   await $.ui.copy({ text: command, surface })
   $.ui.toast(
     `Couldn't focus ${s.name}${how && how !== 'none' ? ` (it runs on ${how})` : ''}. Copied: ${command}`,
@@ -495,7 +718,15 @@ async function pressResume($: EngineInterface, r: RecentInfo, key: string | unde
   await update($, armed, () => ({ sessionId: r.sessionId, at: now }))
   const label = r.title ?? r.prompts.at(-1) ?? r.sessionId.slice(0, 8)
   const again = key ? `Press ${key} again` : 'Click Resume again'
-  const where = (await isHere($, r)) ? 'here, replacing this conversation' : `(${r.cwd}) in a new terminal`
+  const { codexLive = false } = await read($, snapshot)
+  // Only Claude sessions can replace this conversation; Codex always gets its
+  // own terminal, and only a command copy when liveness can't be checked.
+  const where =
+    r.tool === 'codex' && !codexLive
+      ? 'as a copied codex resume command (lsof unavailable, it may still be running)'
+      : r.tool !== 'codex' && (await isHere($, r))
+        ? 'here, replacing this conversation'
+        : `(${r.cwd}) in a new terminal`
   $.ui.toast(`${again} to open “${oneLine(label, 60)}” ${where}`, { timeoutMs: ARM_MS })
 }
 
@@ -515,7 +746,21 @@ async function resume($: EngineInterface, r: RecentInfo, surface: any) {
   if (!(await $.fs.exists(cwd).catch(() => false))) {
     return $.ui.toast(`Can't resume ${label}: ${r.cwd} no longer exists`, { timeoutMs: 8000 })
   }
-  if (await isHere($, r)) {
+  if (r.tool === 'codex') {
+    const { codexLive = false } = await read($, snapshot)
+    if (!codexLive) {
+      // Without lsof we can't prove this session has ended; resuming a live
+      // Codex thread could fork it, so hand over the command instead.
+      const command = `cd ${JSON.stringify(cwd)} && codex resume ${r.sessionId}`
+      await $.ui.copy({ text: command, surface })
+      return $.ui.toast(
+        `Can't check whether “${oneLine(label, 50)}” is still running (lsof unavailable), so it wasn't opened. Copied: ${command}`,
+        { timeoutMs: 8000 },
+      )
+    }
+  }
+  // /resume is Claude's; a Codex session always opens in its own terminal.
+  if (r.tool !== 'codex' && (await isHere($, r))) {
     const ran = await $.command
       .run({ command: 'resume', args: r.sessionId })
       .then(() => true, () => false)
@@ -523,12 +768,15 @@ async function resume($: EngineInterface, r: RecentInfo, surface: any) {
     // Fall through to a new terminal if /resume was refused.
   }
   const res = await $.process
-    .run(['sh', `${$.plugin.root}/bin/jump.sh`, '0', 'resume', r.sessionId, cwd], { timeoutMs: 15000 })
+    .run(['sh', `${$.plugin.root}/bin/jump.sh`, '0', 'resume', r.sessionId, cwd, r.tool], { timeoutMs: 15000 })
     .catch((error: unknown) => ({ exitCode: 1, stdout: '', stderr: String(error) }))
   const [verdict, ...rest] = res.stdout.trim().split(' ')
   if (verdict === 'opened') return $.ui.toast(`Resumed ${label} in a new ${rest.join(' ')} window`)
 
-  const command = `cd ${JSON.stringify(cwd)} && claude --resume ${r.sessionId}`
+  const command =
+    r.tool === 'codex'
+      ? `cd ${JSON.stringify(cwd)} && codex resume ${r.sessionId}`
+      : `cd ${JSON.stringify(cwd)} && claude --resume ${r.sessionId}`
   await $.ui.copy({ text: command, surface })
   $.ui.toast(`Couldn't open a terminal. Copied: ${command}`, { timeoutMs: 8000 })
 }
@@ -585,6 +833,7 @@ export const register: Register = (on, options) => {
   config.recentCount = clampInt(options.recentCount, 1, RECENT_KEYS.length, 8)
   config.promptCount = clampInt(options.promptCount, 0, 10, 3)
   config.actionCount = clampInt(options.actionCount, 0, 10, 3)
+  config.showCodex = options.showCodex !== false
 
   on('session.start', async ($, e, next) => {
     version = await $.fs
@@ -656,7 +905,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link, Input } = $.ui.resolve(e)
     const els = { Box, Text, Link }
-    const { list: allRunning, recent: allRecent = [], all = false, error, checkedAt } = await read($, snapshot)
+    const { list: allRunning, recent: allRecent = [], all = false, codexActive = false, codexLive = false, error, checkedAt } = await read($, snapshot)
     const { query, rev = 0 } = await read($, search)
     const searchKey = `search-${rev}`
     const q = query.trim()
@@ -664,10 +913,10 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     // While searching, only matching rows are drawn; hotkeys go to what is drawn.
     const list = q
-      ? allRunning.filter(s => matchesQuery(q, [s.name, s.title, s.repo, s.branch, s.cwd, ...s.prompts, ...s.actions]))
+      ? allRunning.filter(s => matchesQuery(q, [s.tool, s.name, s.title, s.repo, s.branch, s.cwd, ...s.prompts, ...s.actions]))
       : allRunning
     const recent = q
-      ? allRecent.filter(r => matchesQuery(q, [r.title, r.repo, r.branch, r.cwd, ...(r.allPrompts ?? r.prompts)]))
+      ? allRecent.filter(r => matchesQuery(q, [r.tool, r.title, r.repo, r.branch, r.cwd, ...(r.allPrompts ?? r.prompts)]))
       : allRecent
     const others = list.filter(s => !s.isSelf)
     // Enter in the search field moves onto the first result's button.
@@ -750,7 +999,9 @@ export const register: Register = (on, options) => {
         </Box>
         {error &&<Text color="red">{oneLine(error, 200)}</Text>}
         {checkedAt === 0 && <Text dimColor>Looking for sessions…</Text>}
-        {checkedAt > 0 && !q && others.length === 0 && <Text dimColor>No other Claude Code sessions running.</Text>}
+        {checkedAt > 0 && !q && others.length === 0 && (
+          <Text dimColor>{codexActive ? 'No other agent sessions running.' : 'No other Claude Code sessions running.'}</Text>
+        )}
         {q && all && allRecent.length > 0 && list.length + recent.length === 0 && (
           <Text dimColor>No session matches “{oneLine(q, 60)}”.</Text>
         )}
@@ -767,6 +1018,7 @@ export const register: Register = (on, options) => {
                     {' '}
                     {s.status} · {ago(s.activeAt, now)}
                     {s.kind !== 'interactive' ? ` · ${s.kind}` : ''}
+                    {codexActive ? ` · ${s.tool}` : ''}
                   </Text>
                 </Text>
                 {s.isSelf ? (
@@ -821,7 +1073,11 @@ export const register: Register = (on, options) => {
               <Text wrap="truncate-end">
                 <Text color={waiting ? 'yellow' : undefined} dimColor={!waiting}>{waiting ? '▶ ' : '◦ '}</Text>
                 <Text bold>{r.title ?? r.prompts.at(-1) ?? r.sessionId.slice(0, 8)}</Text>
-                <Text dimColor> ended · {ago(r.activeAt, now)} ago</Text>
+                <Text dimColor>
+                  {' '}
+                  ended · {ago(r.activeAt, now)} ago
+                  {codexActive ? ` · ${r.tool}` : ''}
+                </Text>
               </Text>
               <Button
                 key={`resume-${r.sessionId}`}
@@ -834,7 +1090,11 @@ export const register: Register = (on, options) => {
             {waiting && (
               <Text color="yellow" wrap="truncate-end">
                 {key ? `Press ${key} again` : 'Click again'} to{' '}
-                {here ? 'resume it in this window, replacing this conversation' : 'open a new terminal running claude --resume there'}
+                {r.tool === 'codex' && !codexLive
+                  ? 'copy the codex resume command (lsof unavailable, it may still be running)'
+                  : r.tool !== 'codex' && here
+                    ? 'resume it in this window, replacing this conversation'
+                    : `open a new terminal running ${r.tool === 'codex' ? 'codex resume' : 'claude --resume'} there`}
               </Text>
             )}
             <Text dimColor wrap="truncate-middle">

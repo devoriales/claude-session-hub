@@ -1,8 +1,12 @@
 #!/bin/sh
 # Bring another Claude Code session to the front.
 #
-# usage: jump.sh <pid> <kind> <session-id> <cwd>
-#        jump.sh 0 resume <session-id> <cwd>   open a terminal running `claude --resume`
+# usage: jump.sh <pid> <kind> <session-id> <cwd> [tool]
+#        jump.sh 0 resume <session-id> <cwd> [tool]   open a terminal resuming it
+#
+# tool is claude (default) or codex; it picks the resume command, and codex
+# never gets `claude attach` (nor any attach: a live Codex session must not
+# be resumed into a second client).
 #
 # Prints one line:
 #   focused <how>   the terminal holding that session is now in front
@@ -16,6 +20,7 @@ pid=$1
 kind=$2
 sid=$3
 cwd=$4
+tool=${5:-claude}
 os=$(uname -s)
 
 tty_of() {
@@ -182,7 +187,11 @@ linux_x11() {
 # Open a new terminal window in $cwd running `claude $1 $sid`: `attach` for a
 # background session (it has no terminal), `--resume` for one that ended.
 open_attached() {
-  run="claude $1 $sid"
+  if [ "$tool" = codex ]; then
+    run="codex resume $sid"
+  else
+    run="claude $1 $sid"
+  fi
   cmd="cd '$(printf '%s' "$cwd" | sed "s/'/'\\\\''/g")' && $run"
   if [ "$os" = Darwin ]; then
     pref=$(mac_pref)
@@ -243,9 +252,21 @@ if [ -n "$tty" ]; then
     linux_editor "$pid" && exit 0
     linux_x11 "$pid" && exit 0
   fi
+elif [ "$tool" = codex ]; then
+  # A Codex daemon (the VS Code extension's, or the TUI's app server) has no
+  # tty, but its ancestors still name the window's app. Claude sessions keep
+  # their old no-tty paths (attach, fallback) untouched.
+  if [ "$os" = Darwin ]; then
+    mac_app "$pid" && exit 0
+  else
+    linux_editor "$pid" && exit 0
+    linux_x11 "$pid" && exit 0
+  fi
 fi
 
-if [ "$kind" != interactive ]; then
+# Background Claude sessions have no terminal; open one attached. Codex has
+# no attach, and resuming a live session could fork it, so it falls through.
+if [ "$kind" != interactive ] && [ "$tool" = claude ]; then
   open_attached attach && exit 0
 fi
 
