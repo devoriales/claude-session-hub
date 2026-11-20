@@ -29,6 +29,26 @@ while it is open.
   the PR line is left out. PRs are looked up at most once a minute per branch.
 - Optional, for jumping on Linux:
   `tmux`, `wmctrl` or `xdotool`.
+- Optional: `lsof` (preinstalled on macOS, usually on Linux) to detect
+  **running** [Codex sessions](#codex-sessions); without it they only appear
+  once ended.
+
+## Codex sessions
+
+If the [OpenAI Codex CLI](https://github.com/openai/codex) is on the machine
+(`~/.codex`, or `$CODEX_HOME`, exists), the pane lists Codex sessions too, and
+every row then carries a `· claude` or `· codex` tag:
+
+- **Running** Codex sessions (TUI or the VS Code extension) show with busy/idle,
+  prompts, tool calls and a **Jump** button. Busy/idle is read from the session's
+  own event log, so it can lag a few seconds. When one Codex process serves
+  several sessions, Jump can't tell their windows apart and copies a
+  `cd <folder>` command instead.
+- **Recent** Codex sessions get a **Resume** button that opens a new terminal
+  running `codex resume <id>` (never in this window, and never for a session
+  that is still running). Searching `codex` or `claude` filters to one tool.
+- The `showCodex` option (`/plugin configure`, default on) turns all of this
+  off; without a `~/.codex` folder nothing changes at all.
 
 ## Install
 

@@ -698,7 +698,9 @@ async function pressResume($: EngineInterface, r: RecentInfo, key: string | unde
   await update($, armed, () => ({ sessionId: r.sessionId, at: now }))
   const label = r.title ?? r.prompts.at(-1) ?? r.sessionId.slice(0, 8)
   const again = key ? `Press ${key} again` : 'Click Resume again'
-  const where = (await isHere($, r)) ? 'here, replacing this conversation' : `(${r.cwd}) in a new terminal`
+  // Only Claude sessions can replace this conversation; Codex always gets its own terminal.
+  const where =
+    r.tool !== 'codex' && (await isHere($, r)) ? 'here, replacing this conversation' : `(${r.cwd}) in a new terminal`
   $.ui.toast(`${again} to open “${oneLine(label, 60)}” ${where}`, { timeoutMs: ARM_MS })
 }
 
@@ -718,7 +720,8 @@ async function resume($: EngineInterface, r: RecentInfo, surface: any) {
   if (!(await $.fs.exists(cwd).catch(() => false))) {
     return $.ui.toast(`Can't resume ${label}: ${r.cwd} no longer exists`, { timeoutMs: 8000 })
   }
-  if (await isHere($, r)) {
+  // /resume is Claude's; a Codex session always opens in its own terminal.
+  if (r.tool !== 'codex' && (await isHere($, r))) {
     const ran = await $.command
       .run({ command: 'resume', args: r.sessionId })
       .then(() => true, () => false)
@@ -726,12 +729,15 @@ async function resume($: EngineInterface, r: RecentInfo, surface: any) {
     // Fall through to a new terminal if /resume was refused.
   }
   const res = await $.process
-    .run(['sh', `${$.plugin.root}/bin/jump.sh`, '0', 'resume', r.sessionId, cwd], { timeoutMs: 15000 })
+    .run(['sh', `${$.plugin.root}/bin/jump.sh`, '0', 'resume', r.sessionId, cwd, r.tool], { timeoutMs: 15000 })
     .catch((error: unknown) => ({ exitCode: 1, stdout: '', stderr: String(error) }))
   const [verdict, ...rest] = res.stdout.trim().split(' ')
   if (verdict === 'opened') return $.ui.toast(`Resumed ${label} in a new ${rest.join(' ')} window`)
 
-  const command = `cd ${JSON.stringify(cwd)} && claude --resume ${r.sessionId}`
+  const command =
+    r.tool === 'codex'
+      ? `cd ${JSON.stringify(cwd)} && codex resume ${r.sessionId}`
+      : `cd ${JSON.stringify(cwd)} && claude --resume ${r.sessionId}`
   await $.ui.copy({ text: command, surface })
   $.ui.toast(`Couldn't open a terminal. Copied: ${command}`, { timeoutMs: 8000 })
 }
@@ -954,7 +960,9 @@ export const register: Register = (on, options) => {
         </Box>
         {error &&<Text color="red">{oneLine(error, 200)}</Text>}
         {checkedAt === 0 && <Text dimColor>Looking for sessions…</Text>}
-        {checkedAt > 0 && !q && others.length === 0 && <Text dimColor>No other Claude Code sessions running.</Text>}
+        {checkedAt > 0 && !q && others.length === 0 && (
+          <Text dimColor>{codexActive ? 'No other agent sessions running.' : 'No other Claude Code sessions running.'}</Text>
+        )}
         {q && all && allRecent.length > 0 && list.length + recent.length === 0 && (
           <Text dimColor>No session matches “{oneLine(q, 60)}”.</Text>
         )}
@@ -1043,7 +1051,9 @@ export const register: Register = (on, options) => {
             {waiting && (
               <Text color="yellow" wrap="truncate-end">
                 {key ? `Press ${key} again` : 'Click again'} to{' '}
-                {here ? 'resume it in this window, replacing this conversation' : 'open a new terminal running claude --resume there'}
+                {r.tool !== 'codex' && here
+                  ? 'resume it in this window, replacing this conversation'
+                  : `open a new terminal running ${r.tool === 'codex' ? 'codex resume' : 'claude --resume'} there`}
               </Text>
             )}
             <Text dimColor wrap="truncate-middle">

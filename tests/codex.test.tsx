@@ -46,12 +46,14 @@ type Answers = Partial<Record<'newest' | 'peek' | 'newest-codex' | 'peek-codex' 
 // Answers $.process.run by the sh -c script's name; `claude agents --json`
 // returns no running sessions; git answers nothing useful. `calls` records
 // every command's argv joined with spaces; `copied` what reached the clipboard.
-function world(on: On, answers: Answers, calls?: string[], copied?: string[]) {
+function world(on: On, answers: Answers, calls?: string[], copied?: string[], opts?: { cwd?: string; codexDir?: boolean }) {
   mock.clock(on, { now: NOW })
   mock.env(on, { HOME: '/home/u' })
-  on('session.cwd', () => ({ value: '/home/u' }))
+  on('session.cwd', () => ({ value: opts?.cwd ?? '/home/u' }))
   on('session.id', () => ({ value: 'self-sid' }))
-  on('fs.exists', () => ({ value: true }))
+  on('fs.exists', (_, e: any) =>
+    opts?.codexDir === false && String(e.path).includes('/.codex/') ? { value: false } : { value: true },
+  )
   on('fs.stat', () => ({ value: { mtimeMs: NOW - 60_000 } }))
   on('command.register', () => ({ value: { command: 'sessions' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -210,5 +212,51 @@ test('lsof failure shows no running codex rows and no error', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /Debug network policy/ })).toBeDefined()
   expect(await ui.find({ key: `jump-${CODEX_SID}` })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Couldn't read session history/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('resume on a codex recent row arms with codex wording and opens via jump.sh with the codex arg', async ($, on) => {
+  const calls: string[] = []
+  const copied: string[] = []
+  const resumed: string[] = []
+  world(on, {
+    'newest-codex': `1790001000 ${CODEX_PATH}\n`,
+    'peek-codex': codexPeek,
+    'codex-index': codexIndex,
+  }, calls, copied, { cwd: '/home/u/api' }) // the codex session's own folder
+  on('command.run', (_, e: any) => {
+    if (e.command === 'resume') resumed.push(String(e.args))
+    return { value: {} }
+  })
+  const ui = await openPane($)
+
+  await ui.press({ key: `resume-${CODEX_SID}` })
+  expect(await ui.find({ type: 'Text', text: /codex resume/ })).toBeDefined()
+
+  await ui.press({ key: `resume-${CODEX_SID}` })
+  // Even from the session's own folder, a codex row never resumes in place.
+  expect(resumed.length).toBe(0)
+  const jumpCall = calls.find(c => c.includes('jump.sh'))
+  expect(jumpCall).toBeDefined()
+  expect(jumpCall!.endsWith(`0 resume ${CODEX_SID} /home/u/api codex`)).toBe(true)
+  // jump.sh answered nothing, so the command was copied instead.
+  expect(copied[0]).toBe(`cd "/home/u/api" && codex resume ${CODEX_SID}`)
+  await ui.unmount()
+})
+
+test('a missing codex dir runs no codex commands and hides tags', async ($, on) => {
+  const calls: string[] = []
+  world(on, {
+    newest: `1790000000 ${CLAUDE_PATH}\n`,
+    peek: claudePeek,
+  }, calls, undefined, { codexDir: false })
+  const ui = await openPane($)
+
+  expect(await ui.find({ type: 'Text', text: /Debug network policy/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /· claude/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /· codex/ })).toBeUndefined()
+  for (const name of ['lsof-codex', 'newest-codex', 'peek-codex', 'codex-index']) {
+    expect(calls.some(c => c.includes(name))).toBe(false)
+  }
   await ui.unmount()
 })
