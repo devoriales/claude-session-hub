@@ -28,10 +28,16 @@ const claudePeek = [
   JSON.stringify({ type: 'user', cwd: '/home/u/infra', message: { role: 'user', content: 'why is ingress blocked' } }),
 ].join('\n')
 
-const codexMeta = (threadSource = 'user') =>
+const codexMeta = (threadSource = 'user', branch?: string) =>
   JSON.stringify({
     type: 'session_meta',
-    payload: { cwd: '/home/u/api', thread_source: threadSource, source: 'codex-tui', id: CODEX_SID },
+    payload: {
+      cwd: '/home/u/api',
+      thread_source: threadSource,
+      source: 'codex-tui',
+      id: CODEX_SID,
+      git: branch ? { branch, commit_hash: 'abc123' } : null,
+    },
   })
 const codexUser = (text: string) =>
   JSON.stringify({
@@ -46,7 +52,7 @@ type Answers = Partial<Record<'newest' | 'peek' | 'newest-codex' | 'peek-codex' 
 // Answers $.process.run by the sh -c script's name; `claude agents --json`
 // returns no running sessions; git answers nothing useful. `calls` records
 // every command's argv joined with spaces; `copied` what reached the clipboard.
-function world(on: On, answers: Answers, calls?: string[], copied?: string[], opts?: { cwd?: string; codexDir?: boolean }) {
+function world(on: On, answers: Answers, calls?: string[], copied?: string[], opts?: { cwd?: string; codexDir?: boolean; mtimeMs?: number }) {
   mock.clock(on, { now: NOW })
   mock.env(on, { HOME: '/home/u' })
   on('session.cwd', () => ({ value: opts?.cwd ?? '/home/u' }))
@@ -54,7 +60,7 @@ function world(on: On, answers: Answers, calls?: string[], copied?: string[], op
   on('fs.exists', (_, e: any) =>
     opts?.codexDir === false && String(e.path).includes('/.codex/') ? { value: false } : { value: true },
   )
-  on('fs.stat', () => ({ value: { mtimeMs: NOW - 60_000 } }))
+  on('fs.stat', () => ({ value: { mtimeMs: opts?.mtimeMs ?? NOW - 60_000 } }))
   on('command.register', () => ({ value: { command: 'sessions' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -276,5 +282,51 @@ test('the same rollout open on two file descriptors is one focusable row', async
   await ui.press({ key: `jump-${CODEX_SID}` })
   expect(calls.some(c => c.includes('jump.sh'))).toBe(true)
   expect(copied.length).toBe(0)
+  await ui.unmount()
+})
+
+test('without lsof a recent codex row is copy-only, never auto-resumed', async ($, on) => {
+  const calls: string[] = []
+  const copied: string[] = []
+  world(on, {
+    'lsof-codex': 'nolsof\n', // the snippet's marker: lsof is not installed
+    'newest-codex': `1790001000 ${CODEX_PATH}\n`,
+    'peek-codex': codexPeek,
+    'codex-index': codexIndex,
+  }, calls, copied)
+  const ui = await openPane($)
+
+  await ui.press({ key: `resume-${CODEX_SID}` })
+  await ui.press({ key: `resume-${CODEX_SID}` })
+  // Liveness can't be established, so nothing may launch another client.
+  expect(calls.some(c => c.includes('jump.sh'))).toBe(false)
+  expect(copied[0]).toBe(`cd "/home/u/api" && codex resume ${CODEX_SID}`)
+  await ui.unmount()
+})
+
+test('an interrupted turn shows idle, not busy', async ($, on) => {
+  world(on, {
+    'lsof-codex': lsofRecord(4242, [CODEX_PATH]),
+    // The last task event in the log is an interruption; the file is fresh,
+    // so the mtime fallback alone would wrongly say busy.
+    'peek-codex': [codexMeta(), codexUser('make the deploy job stable'), '"type":"turn_aborted"'].join('\n'),
+  }, undefined, undefined, { mtimeMs: NOW - 1_000 })
+  const ui = await openPane($)
+
+  expect(await ui.find({ key: `jump-${CODEX_SID}` })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /idle/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a recent codex row shows the branch recorded at session start', async ($, on) => {
+  world(on, {
+    'newest-codex': `1790001000 ${CODEX_PATH}\n`,
+    'peek-codex': [codexMeta('user', 'np-fix'), codexUser('make the deploy job stable')].join('\n'),
+    'codex-index': codexIndex,
+  })
+  const ui = await openPane($)
+
+  expect(await ui.find({ key: `resume-${CODEX_SID}` })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /np-fix/ })).toBeDefined()
   await ui.unmount()
 })

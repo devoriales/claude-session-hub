@@ -30,8 +30,9 @@ while it is open.
 - Optional, for jumping on Linux:
   `tmux`, `wmctrl` or `xdotool`.
 - Optional: `lsof` (preinstalled on macOS, usually on Linux) to detect
-  **running** [Codex sessions](#codex-sessions); without it they only appear
-  once ended.
+  **running** [Codex sessions](#codex-sessions). Without it they only appear
+  once ended, and Resume only copies the `codex resume` command — the pane
+  can't prove a session really ended, and resuming a live one could fork it.
 
 ## Codex sessions
 

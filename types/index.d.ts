@@ -56,6 +56,8 @@ export type Snapshot = {
   all?: boolean
   /** Codex support is on and `$CODEX_HOME/sessions` exists; rows carry tool tags. */
   codexActive?: boolean
+  /** Running-Codex discovery worked this tick; unset means a "recent" Codex session may be live. */
+  codexLive?: boolean
   error?: string
   checkedAt: number
 }

@@ -237,6 +237,7 @@ const describeCodexTool = (payload: any): string | undefined => {
 // PEEK_CODEX's output: session_meta, user messages, tool calls, last task event.
 const parseCodexTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> => {
   let cwd: string | undefined
+  let branch: string | undefined
   let threadSource: string | undefined
   let source: string | undefined
   let lastTask: TranscriptInfo['lastTask']
@@ -245,7 +246,8 @@ const parseCodexTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> =
 
   for (const line of stdout.split('\n')) {
     if (line === '"type":"task_started"') lastTask = 'started'
-    if (line === '"type":"task_complete"') lastTask = 'complete'
+    // An interrupted turn ends it too; without this an abort leaves "busy" stuck.
+    if (line === '"type":"task_complete"' || line === '"type":"turn_aborted"') lastTask = 'complete'
     if (!line.startsWith('{')) continue
     let row: any
     try {
@@ -259,6 +261,9 @@ const parseCodexTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> =
       if (typeof payload.thread_source === 'string') threadSource = payload.thread_source
       if (typeof payload.source === 'string') source = payload.source
       else if (typeof payload.originator === 'string') source = payload.originator
+      // The branch the session was started on; the folder's current checkout
+      // may have moved on since.
+      if (typeof payload.git?.branch === 'string' && payload.git.branch !== 'HEAD') branch = payload.git.branch
     }
     if (payload?.role === 'user' && Array.isArray(payload.content)) {
       for (const block of payload.content) {
@@ -275,7 +280,7 @@ const parseCodexTranscript = (stdout: string): Omit<TranscriptInfo, 'mtimeMs'> =
     }
   }
 
-  return { cwd, threadSource, source, lastTask, prompts: lastN(prompts, config.promptCount), allPrompts: prompts, actions: lastN(actions, config.actionCount) }
+  return { cwd, branch, threadSource, source, lastTask, prompts: lastN(prompts, config.promptCount), allPrompts: prompts, actions: lastN(actions, config.actionCount) }
 }
 
 const SESSION_FILE = /\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
@@ -300,7 +305,7 @@ const PEEK_CODEX = `f="$1"
 head -n 1 "$f"
 grep -F '"role":"user"' "$f" | tail -n 25
 tail -c 400000 "$f" | grep -E '"type":"(custom_tool_call|function_call|local_shell_call)"' | tail -n 8
-tail -c 100000 "$f" | grep -oE '"type":"task_(started|complete)"' | tail -n 1`
+tail -c 100000 "$f" | grep -oE '"type":"(task_started|task_complete|turn_aborted)"' | tail -n 1`
 
 // Codex keeps each session's title here; ids repeat, the newest line wins.
 const CODEX_INDEX = `tail -n 2000 "$1/session_index.jsonl" 2>/dev/null || true`
@@ -308,7 +313,9 @@ const CODEX_INDEX = `tail -n 2000 "$1/session_index.jsonl" 2>/dev/null || true`
 // A running Codex session holds its rollout file open; lsof is the only
 // process-to-session map Codex offers. -F gives one field per line: p pid,
 // c command, n path. No lsof, or none open, prints nothing.
-const LSOF_CODEX = `command -v lsof >/dev/null 2>&1 || exit 0
+// "nolsof" tells the caller liveness is UNKNOWN, as opposed to "none running":
+// without it, a live session would be offered under Recent with a working Resume.
+const LSOF_CODEX = `command -v lsof >/dev/null 2>&1 || { echo nolsof; exit 0; }
 lsof -Fpcn +D "$1/sessions" 2>/dev/null || true`
 
 // lsof -Fpcn output -> one entry per open rollout file, with how many files
@@ -580,10 +587,14 @@ async function refresh($: EngineInterface) {
     }
 
     const titles = codex ? await codexTitles($, codex) : undefined
+    // Whether running-Codex discovery actually ran: lsof present and answering.
+    // Unknown liveness means a "recent" Codex session may in fact be live.
+    let codexLive = false
     if (codex) {
       const lres = await $.process
         .run(['sh', '-c', LSOF_CODEX, 'lsof-codex', codex], { timeoutMs: 10000 })
         .catch(() => undefined)
+      codexLive = lres !== undefined && !lres.stdout.startsWith('nolsof')
       const open = parseLsof(lres?.stdout ?? '')
       const perPid = new Map<number, number>()
       for (const o of open) perPid.set(o.pid, (perPid.get(o.pid) ?? 0) + 1)
@@ -646,8 +657,8 @@ async function refresh($: EngineInterface) {
     // If the mode flipped while this ran, keep the newer choice; the next tick fills it in.
     await update($, snapshot, s =>
       (s.all ?? false) === all
-        ? { list, recent, all, codexActive, checkedAt: now, error: historyError }
-        : { ...s, list, codexActive, checkedAt: now, error: historyError },
+        ? { list, recent, all, codexActive, codexLive, checkedAt: now, error: historyError }
+        : { ...s, list, codexActive, codexLive, checkedAt: now, error: historyError },
     )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -699,9 +710,15 @@ async function pressResume($: EngineInterface, r: RecentInfo, key: string | unde
   await update($, armed, () => ({ sessionId: r.sessionId, at: now }))
   const label = r.title ?? r.prompts.at(-1) ?? r.sessionId.slice(0, 8)
   const again = key ? `Press ${key} again` : 'Click Resume again'
-  // Only Claude sessions can replace this conversation; Codex always gets its own terminal.
+  const { codexLive = false } = await read($, snapshot)
+  // Only Claude sessions can replace this conversation; Codex always gets its
+  // own terminal, and only a command copy when liveness can't be checked.
   const where =
-    r.tool !== 'codex' && (await isHere($, r)) ? 'here, replacing this conversation' : `(${r.cwd}) in a new terminal`
+    r.tool === 'codex' && !codexLive
+      ? 'as a copied codex resume command (lsof unavailable, it may still be running)'
+      : r.tool !== 'codex' && (await isHere($, r))
+        ? 'here, replacing this conversation'
+        : `(${r.cwd}) in a new terminal`
   $.ui.toast(`${again} to open “${oneLine(label, 60)}” ${where}`, { timeoutMs: ARM_MS })
 }
 
@@ -720,6 +737,19 @@ async function resume($: EngineInterface, r: RecentInfo, surface: any) {
   const label = r.title ?? r.sessionId.slice(0, 8)
   if (!(await $.fs.exists(cwd).catch(() => false))) {
     return $.ui.toast(`Can't resume ${label}: ${r.cwd} no longer exists`, { timeoutMs: 8000 })
+  }
+  if (r.tool === 'codex') {
+    const { codexLive = false } = await read($, snapshot)
+    if (!codexLive) {
+      // Without lsof we can't prove this session has ended; resuming a live
+      // Codex thread could fork it, so hand over the command instead.
+      const command = `cd ${JSON.stringify(cwd)} && codex resume ${r.sessionId}`
+      await $.ui.copy({ text: command, surface })
+      return $.ui.toast(
+        `Can't check whether “${oneLine(label, 50)}” is still running (lsof unavailable), so it wasn't opened. Copied: ${command}`,
+        { timeoutMs: 8000 },
+      )
+    }
   }
   // /resume is Claude's; a Codex session always opens in its own terminal.
   if (r.tool !== 'codex' && (await isHere($, r))) {
@@ -867,7 +897,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link, Input } = $.ui.resolve(e)
     const els = { Box, Text, Link }
-    const { list: allRunning, recent: allRecent = [], all = false, codexActive = false, error, checkedAt } = await read($, snapshot)
+    const { list: allRunning, recent: allRecent = [], all = false, codexActive = false, codexLive = false, error, checkedAt } = await read($, snapshot)
     const { query, rev = 0 } = await read($, search)
     const searchKey = `search-${rev}`
     const q = query.trim()
@@ -1052,9 +1082,11 @@ export const register: Register = (on, options) => {
             {waiting && (
               <Text color="yellow" wrap="truncate-end">
                 {key ? `Press ${key} again` : 'Click again'} to{' '}
-                {r.tool !== 'codex' && here
-                  ? 'resume it in this window, replacing this conversation'
-                  : `open a new terminal running ${r.tool === 'codex' ? 'codex resume' : 'claude --resume'} there`}
+                {r.tool === 'codex' && !codexLive
+                  ? 'copy the codex resume command (lsof unavailable, it may still be running)'
+                  : r.tool !== 'codex' && here
+                    ? 'resume it in this window, replacing this conversation'
+                    : `open a new terminal running ${r.tool === 'codex' ? 'codex resume' : 'claude --resume'} there`}
               </Text>
             )}
             <Text dimColor wrap="truncate-middle">
