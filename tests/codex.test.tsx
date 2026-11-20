@@ -44,22 +44,29 @@ const codexIndex = JSON.stringify({ id: CODEX_SID, thread_name: 'Fix flaky deplo
 type Answers = Partial<Record<'newest' | 'peek' | 'newest-codex' | 'peek-codex' | 'codex-index' | 'lsof-codex', string>>
 
 // Answers $.process.run by the sh -c script's name; `claude agents --json`
-// returns no running sessions; git answers nothing useful.
-function world(on: On, answers: Answers, calls?: string[]) {
+// returns no running sessions; git answers nothing useful. `calls` records
+// every command's argv joined with spaces; `copied` what reached the clipboard.
+function world(on: On, answers: Answers, calls?: string[], copied?: string[]) {
   mock.clock(on, { now: NOW })
   mock.env(on, { HOME: '/home/u' })
   on('session.cwd', () => ({ value: '/home/u' }))
   on('session.id', () => ({ value: 'self-sid' }))
   on('fs.exists', () => ({ value: true }))
+  on('fs.stat', () => ({ value: { mtimeMs: NOW - 60_000 } }))
   on('command.register', () => ({ value: { command: 'sessions' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  if (copied) {
+    on('ui.copy', (_, e: any) => {
+      copied.push(String(e.text))
+      return { value: {} }
+    })
+  }
   on('process.run', (_, e) => {
+    if (calls) calls.push(e.argv.join(' '))
     if (e.argv[0] === 'claude') return ok('[]')
     const name = String(e.argv[3] ?? e.argv[0])
-    if (calls) calls.push(name)
     if (name in answers) return ok(answers[name as keyof Answers]!)
-    if (name === 'newest' || name === 'newest-codex' || name === 'lsof-codex' || name === 'codex-index') return ok('')
     return ok('')
   })
 }
@@ -138,5 +145,70 @@ test('searching for codex filters to codex rows', async ($, on) => {
   await ui.input({ key: 'search-1', text: 'codex', kind: 'change' })
   expect(await ui.find({ key: `resume-${CODEX_SID}` })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Debug network policy/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+const lsofRecord = (pid: number, paths: string[]) => [`p${pid}`, 'ccodex', ...paths.map(p => `n${p}`), ''].join('\n')
+const CODEX_SID_2 = '02b2f7f0-b150-7e41-bfc3-88aac140351c'
+const CODEX_PATH_2 = `/home/u/.codex/sessions/2026/11/20/rollout-2026-11-20T09-00-00-${CODEX_SID_2}.jsonl`
+const runningPeek = (task: 'task_started' | 'task_complete') =>
+  [codexMeta(), codexUser('make the deploy job stable'), `"type":"${task}"`].join('\n')
+
+test('a running codex session shows busy with a Jump button', async ($, on) => {
+  world(on, {
+    'lsof-codex': lsofRecord(4242, [CODEX_PATH]),
+    'peek-codex': runningPeek('task_started'),
+    'codex-index': codexIndex,
+  })
+  const ui = await openPane($)
+
+  expect(await ui.find({ key: `jump-${CODEX_SID}` })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /busy/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /· codex/ })).toBeDefined()
+  // Running, so not offered under Recent too.
+  expect(await ui.find({ key: `resume-${CODEX_SID}` })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('task_complete shows idle', async ($, on) => {
+  world(on, {
+    'lsof-codex': lsofRecord(4242, [CODEX_PATH]),
+    'peek-codex': runningPeek('task_complete'),
+  })
+  const ui = await openPane($)
+
+  expect(await ui.find({ key: `jump-${CODEX_SID}` })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /idle/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('jump on a shared daemon pid copies cd instead of focusing', async ($, on) => {
+  const calls: string[] = []
+  const copied: string[] = []
+  world(on, {
+    'lsof-codex': lsofRecord(4242, [CODEX_PATH, CODEX_PATH_2]),
+    'peek-codex': runningPeek('task_started'),
+  }, calls, copied)
+  const ui = await openPane($)
+
+  await ui.press({ key: `jump-${CODEX_SID}` })
+  expect(calls.some(c => c.includes('jump.sh'))).toBe(false)
+  expect(copied.length).toBe(1)
+  expect(copied[0]!.startsWith('cd ')).toBe(true)
+  expect(copied[0]!.includes('/home/u/api')).toBe(true)
+  await ui.unmount()
+})
+
+test('lsof failure shows no running codex rows and no error', async ($, on) => {
+  world(on, {
+    'lsof-codex': '',
+    newest: `1790000000 ${CLAUDE_PATH}\n`,
+    peek: claudePeek,
+  })
+  const ui = await openPane($)
+
+  expect(await ui.find({ type: 'Text', text: /Debug network policy/ })).toBeDefined()
+  expect(await ui.find({ key: `jump-${CODEX_SID}` })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Couldn't read session history/ })).toBeUndefined()
   await ui.unmount()
 })
