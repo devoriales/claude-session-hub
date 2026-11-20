@@ -316,15 +316,16 @@ lsof -Fpcn +D "$1/sessions" 2>/dev/null || true`
 const parseLsof = (stdout: string) => {
   let pid = 0
   let command = ''
-  const open: { pid: number; path: string; sid: string }[] = []
+  // By session id: one file on several descriptors (or pids) is one session.
+  const open = new Map<string, { pid: number; path: string; sid: string }>()
   for (const line of stdout.split('\n')) {
     if (line.startsWith('p')) pid = Number(line.slice(1))
     if (line.startsWith('c')) command = line.slice(1)
     if (!line.startsWith('n') || !command.includes('codex')) continue // skips our own grep/tail peeks
     const sid = CODEX_FILE.exec(line.slice(1))?.[1]
-    if (sid && pid > 0) open.push({ pid, path: line.slice(1), sid })
+    if (sid && pid > 0 && !open.has(sid)) open.set(sid, { pid, path: line.slice(1), sid })
   }
-  return open
+  return [...open.values()]
 }
 
 // Claude Code names a session "<folder>-<short code>" (e.g. "lime-cloud-cf");

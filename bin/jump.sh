@@ -252,6 +252,16 @@ if [ -n "$tty" ]; then
     linux_editor "$pid" && exit 0
     linux_x11 "$pid" && exit 0
   fi
+elif [ "$tool" = codex ]; then
+  # A Codex daemon (the VS Code extension's, or the TUI's app server) has no
+  # tty, but its ancestors still name the window's app. Claude sessions keep
+  # their old no-tty paths (attach, fallback) untouched.
+  if [ "$os" = Darwin ]; then
+    mac_app "$pid" && exit 0
+  else
+    linux_editor "$pid" && exit 0
+    linux_x11 "$pid" && exit 0
+  fi
 fi
 
 # Background Claude sessions have no terminal; open one attached. Codex has

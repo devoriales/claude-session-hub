@@ -41,7 +41,7 @@ const codexUser = (text: string) =>
 const codexPeek = [codexMeta(), codexUser('# AGENTS.md instructions for /home/u/api'), codexUser('make the deploy job stable')].join('\n')
 const codexIndex = JSON.stringify({ id: CODEX_SID, thread_name: 'Fix flaky deploy', updated_at: '2026-11-20T08:00:00Z' })
 
-type Answers = Partial<Record<'newest' | 'peek' | 'newest-codex' | 'peek-codex' | 'codex-index' | 'lsof-codex', string>>
+type Answers = Partial<Record<'newest' | 'peek' | 'newest-codex' | 'peek-codex' | 'codex-index' | 'lsof-codex' | 'jump.sh', string>>
 
 // Answers $.process.run by the sh -c script's name; `claude agents --json`
 // returns no running sessions; git answers nothing useful. `calls` records
@@ -67,6 +67,7 @@ function world(on: On, answers: Answers, calls?: string[], copied?: string[], op
   on('process.run', (_, e) => {
     if (calls) calls.push(e.argv.join(' '))
     if (e.argv[0] === 'claude') return ok('[]')
+    if (String(e.argv[1]).endsWith('jump.sh')) return ok(answers['jump.sh'] ?? '')
     const name = String(e.argv[3] ?? e.argv[0])
     if (name in answers) return ok(answers[name as keyof Answers]!)
     return ok('')
@@ -258,5 +259,22 @@ test('a missing codex dir runs no codex commands and hides tags', async ($, on) 
   for (const name of ['lsof-codex', 'newest-codex', 'peek-codex', 'codex-index']) {
     expect(calls.some(c => c.includes(name))).toBe(false)
   }
+  await ui.unmount()
+})
+
+test('the same rollout open on two file descriptors is one focusable row', async ($, on) => {
+  const calls: string[] = []
+  const copied: string[] = []
+  // lsof reports one n line per descriptor; the pid is NOT really shared.
+  world(on, {
+    'lsof-codex': lsofRecord(4242, [CODEX_PATH, CODEX_PATH]),
+    'peek-codex': runningPeek('task_started'),
+    'jump.sh': 'focused iTerm2',
+  }, calls, copied)
+  const ui = await openPane($)
+
+  await ui.press({ key: `jump-${CODEX_SID}` })
+  expect(calls.some(c => c.includes('jump.sh'))).toBe(true)
+  expect(copied.length).toBe(0)
   await ui.unmount()
 })
